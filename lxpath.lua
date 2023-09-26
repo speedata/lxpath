@@ -1,0 +1,849 @@
+local M = {
+    private = {},
+    dodebug = false,
+    debugindent = "  ",
+}
+
+local debuglevel = 0
+
+local function unread_rune(tbl)
+    tbl.pos = tbl.pos - 1
+end
+
+---@return string
+---@return boolean
+local function read_rune(tbl)
+    local r = tbl[tbl.pos]
+    tbl.pos = tbl.pos + 1
+    if tbl.pos > #tbl + 1 then return r, true end
+    return r, false
+end
+
+local function is_letter(str)
+    return string.match(str, "%w")
+end
+
+local function is_digit(str)
+    return string.match(str, "[0-9]")
+end
+
+local function is_space(str)
+    return string.match(str, "%s")
+end
+
+---@param runes table
+---@return string
+local function get_qname(runes)
+    local word = {}
+    local hasColon = false
+    local r, eof
+    while true do
+        r, eof = read_rune(runes)
+        if eof then break end
+        if is_letter(r) or is_digit(r) or r == '_' or r == '-' or r == '·' or r == '‿' or r == '⁀' then
+            word[#word + 1] = r
+        elseif r == ":" then
+            if hasColon then
+                unread_rune(runes)
+                break
+            end
+            word[#word + 1] = r
+            hasColon = true
+        else
+            unread_rune(runes)
+            break
+        end
+    end
+    return table.concat(word)
+end
+M.private.get_qname = get_qname
+
+---@return string
+local function get_delimited_string(tbl)
+    local str = {}
+    local eof = false
+    local r
+    local delim = read_rune(tbl)
+    while true do
+        r, eof = read_rune(tbl)
+        if eof then break end
+        if r == delim then
+            break
+        else
+            str[#str + 1] = r
+        end
+    end
+    return table.concat(str)
+end
+
+---@return string comment
+local function get_comment(tbl)
+    local level = 1
+    local cur, after
+    local eof
+    local comment = {}
+    while true do
+        cur, eof = read_rune(tbl)
+        if eof then break end
+        after, eof = read_rune(tbl)
+        if eof then break end
+        if cur == ':' and after == ')' then
+            level = level - 1
+            if level == 0 then
+                break
+            end
+        elseif cur == '(' and after == ':' then
+            level = level + 1
+        end
+        comment[#comment + 1] = cur
+
+        if after == ':' or after == '(' then
+            unread_rune(tbl)
+        else
+            -- add after to comment
+            comment[#comment + 1] = after
+        end
+    end
+    return table.concat(comment)
+end
+
+
+---@return number?
+local function get_num(runes)
+    local tbl = {}
+    local eof = false
+    local r
+    while true do
+        r, eof = read_rune(runes)
+        if eof then break end
+        if '0' <= r and r <= '9' then
+            tbl[#tbl + 1] = r
+        elseif r == "." or r == "e" or r == "-" then
+            tbl[#tbl + 1] = r
+        else
+            unread_rune(runes)
+            break
+        end
+    end
+    return tonumber(table.concat(tbl, ""))
+end
+M.private.get_num = get_num
+
+---@return table
+local function split_chars(str)
+    local runes = {}
+    for _, c in utf8.codes(str) do
+        runes[#runes + 1] = utf8.char(c)
+    end
+    runes.pos = 1
+    return runes
+end
+M.private.split_chars = split_chars
+
+---@class token
+
+
+---@class tokenlist
+local tokenlist = {}
+
+
+function tokenlist:new(o)
+    o = o or {} -- create object if user does not provide one
+    setmetatable(o, self)
+    self.__index = self
+    self.pos = 1
+    return o
+end
+
+---@return token?
+---@return boolean
+function tokenlist:peek()
+    if self.pos > #self then
+        return nil, true
+    end
+    return self[self.pos], false
+end
+
+---@return token?
+---@return string?
+function tokenlist:read()
+    if self.pos > #self then
+        return nil, "eof"
+    end
+    self.pos = self.pos + 1
+    return self[self.pos - 1], nil
+end
+
+---@param tokvalues table
+---@return token?
+---@return string?
+function tokenlist:readNexttokIfIsOneOfValue(tokvalues)
+    if self.pos > #self then
+        return nil, nil
+    end
+    for _, tokvalue in ipairs(tokvalues) do
+        if self[self.pos][1] == tokvalue then
+            return self:read()
+        end
+    end
+    return nil, nil
+end
+
+---@param str string
+---@return tokenlist?
+---@return string?
+function M.string_to_tokenlist(str)
+    if str == nil then return {} end
+    local tokens = tokenlist:new()
+    local nextrune
+    local eof
+    local runes = split_chars(str)
+    while true do
+        local r
+        r, eof = read_rune(runes)
+        if eof then break end
+        if '0' <= r and r <= '9' then
+            unread_rune(runes)
+            local num
+            num = get_num(runes)
+            if num then
+                tokens[#tokens + 1] = { num, "tokNumber" }
+            end
+        elseif r == '.' then
+            nextrune, eof = read_rune(runes)
+            if eof then
+                tokens[#tokens + 1] = { '.', "tokOperator" }
+                break
+            end
+            if '0' <= nextrune and nextrune <= '9' then
+                unread_rune(runes)
+                unread_rune(runes)
+                local num
+                num = get_num(runes)
+                tokens[#tokens + 1] = { num, "tokNumber" }
+            else
+                unread_rune(runes)
+                tokens[#tokens + 1] = { '.', "tokOperator" }
+            end
+        elseif r == '+' or r == '-' or r == '*' or r == '?' or r == '@' or r == '|' or r == '=' then
+            tokens[#tokens + 1] = { r, "tokOperator" }
+        elseif r == "," then
+            tokens[#tokens + 1] = { r, "tokComma" }
+        elseif r == '>' or r == '<' then
+            nextrune, eof = read_rune(runes)
+            if eof then break end
+            if nextrune == '=' or nextrune == r then
+                tokens[#tokens + 1] = { r .. r, "tokOperator" }
+            else
+                tokens[#tokens + 1] = { r, "tokOperator" }
+                unread_rune(runes)
+            end
+        elseif r == '!' then
+            nextrune, eof = read_rune(runes)
+            if eof then break end
+            if nextrune == '=' then
+                tokens[#tokens + 1] = { "!=", "tokOperator" }
+            else
+                return nil, string.format("= expected after !, got %s", nextrune)
+            end
+        elseif r == '/' or r == ':' then
+            nextrune, eof = read_rune(runes)
+            if eof then
+                tokens[#tokens + 1] = { r, "tokOperator" }
+                break
+            end
+            if nextrune == r then
+                tokens[#tokens + 1] = { r .. r, "tokOperator" }
+            else
+                tokens[#tokens + 1] = { r, "tokOperator" }
+                unread_rune(runes)
+            end
+        elseif r == '[' then
+            tokens[#tokens + 1] = { r, "tokOpenBracket" }
+        elseif r == ']' then
+            tokens[#tokens + 1] = { r, "tokCloseBracket" }
+        elseif r == '$' then
+            local name
+            name = get_qname(runes)
+            tokens[#tokens + 1] = { name, "tokVarname" }
+        elseif is_space(r) then
+            -- ignore whitespace
+        elseif is_letter(r) then
+            unread_rune(runes)
+            local name
+            name = get_qname(runes)
+            nextrune, eof = read_rune(runes)
+            if eof then
+                tokens[#tokens + 1] = { name, "tokQName" }
+                break
+            end
+            if nextrune == ':' then
+                tokens[#tokens + 1] = { string.sub(name, 1, -2), "tokDoubleColon" }
+            else
+                tokens[#tokens + 1] = { name, "tokQName" }
+            end
+        elseif r == '"' or r == "'" then
+            unread_rune(runes)
+            str = get_delimited_string(runes)
+            tokens[#tokens + 1] = { str, "tokString" }
+        elseif r == '(' then
+            nextrune, eof = read_rune(runes)
+            if eof then
+                return tokens, "parse error, unbalanced ( at end"
+            end
+            if nextrune == ':' then
+                get_comment(runes)
+            else
+                unread_rune(runes)
+                tokens[#tokens + 1] = { "(", "tokOpenParen" }
+            end
+        elseif r == ')' then
+            tokens[#tokens + 1] = { ")", "tokCloseParen" }
+        else
+            return nil, string.format("Invalid char for xpath expression %q", r)
+        end
+    end
+    return tokens
+end
+
+--------------------------
+local function number_value(sequence)
+    if not sequence then
+        return nil, "empty sequence"
+    end
+    if #sequence == 0 then
+        return nil, "empty sequence"
+    end
+    if #sequence > 1 then
+        return nil, "number value, # must be 1"
+    end
+    return tonumber(sequence[1]), nil
+end
+
+
+
+-------------------------
+
+---@param tl tokenlist
+---@param step string
+local function enterStep(tl, step)
+    if M.dodebug then
+        local token, eof = tl:peek()
+        if eof then return end
+        token = token or {"-","-"}
+        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]),token[2]))
+        debuglevel = debuglevel + 1
+    end
+end
+
+---@param tl tokenlist
+---@param step string
+local function leaveStep(tl, step)
+    if M.dodebug then
+        local token, _ = tl:peek()
+        token = token or {"-","-"}
+        debuglevel = debuglevel - 1
+        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step,tostring(token[1]),token[2] ))
+    end
+end
+
+local parse_expr, parse_expr_single, parse_or_expr, parse_and_expr, parse_comparison_expr, parse_range_expr, parse_additive_expr, parse_multiplicative_expr
+
+---@type table sequence
+
+---@class context
+
+
+---@alias evalfunc function(context) sequence?, string?
+
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+-- [2] Expr ::= ExprSingle ("," ExprSingle)*
+function parse_expr(tl)
+    enterStep(tl, "2 parseExpr")
+    local efs = {}
+    local ef, err = parse_expr_single(tl)
+    if err ~= nil then
+        leaveStep(tl, "2 parseExpr")
+        return nil, err
+    end
+    leaveStep(tl, "2 parseExpr")
+    return ef, nil
+end
+
+-- [3] ExprSingle ::= ForExpr | QuantifiedExpr | IfExpr | OrExpr
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_expr_single(tl)
+    enterStep(tl, "3 parse_expr_single")
+    local efs = {}
+    local ef, err = parse_or_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "3 parse_expr_single")
+        return nil, err
+    end
+    leaveStep(tl, "3 parse_expr_single")
+    return ef, nil
+end
+
+-- [8] OrExpr ::= AndExpr ( "or" AndExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_or_expr(tl)
+    enterStep(tl, "8 parse_or_expr")
+    local ef, err = parse_and_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "8 parse_or_expr")
+        return nil, err
+    end
+    leaveStep(tl, "8 parse_or_expr")
+    return ef, nil
+end
+
+-- [9] AndExpr ::= ComparisonExpr ( "and" ComparisonExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_and_expr(tl)
+    enterStep(tl, "9 parse_and_expr")
+    local ef, err = parse_comparison_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "8 parse_or_expr")
+        return nil, err
+    end
+    leaveStep(tl, "9 parse_and_expr")
+    return ef, nil
+end
+
+-- [10] ComparisonExpr ::= RangeExpr ( (ValueComp | GeneralComp| NodeComp) RangeExpr )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_comparison_expr(tl)
+    enterStep(tl, "10 parse_comparison_expr")
+    local ef, err = parse_range_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "10 parse_comparison_expr")
+        return nil, err
+    end
+    leaveStep(tl, "10 parse_comparison_expr")
+    return ef, nil
+end
+
+-- [11] RangeExpr  ::=  AdditiveExpr ( "to" AdditiveExpr )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_range_expr(tl)
+    enterStep(tl, "11 parse_range_expr")
+    local ef, err = parse_additive_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "11 parse_range_expr")
+        return nil, err
+    end
+
+    leaveStep(tl, "11 parse_range_expr")
+    return ef, nil
+end
+
+-- [12] AdditiveExpr ::= MultiplicativeExpr ( ("+" | "-") MultiplicativeExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_additive_expr(tl)
+    enterStep(tl, "12 parse_additive_expr")
+    local efs = {}
+    local operators = {}
+    while true do
+        local ef, err = parse_multiplicative_expr(tl)
+        if err ~= nil then
+            leaveStep(tl, "12 parse_additive_expr")
+            return nil, err
+        end
+        efs[#efs + 1] = ef
+        local op
+        op, err = tl:readNexttokIfIsOneOfValue({ "+", "-" })
+        if err ~= nil then
+            leaveStep(tl, "12 parse_additive_expr")
+            return nil, err
+        end
+        if not op then break end
+        operators[#operators + 1] = op[1]
+    end
+    if #efs == 1 then return efs[1], nil end
+
+    local evaler = function(ctx)
+        local s0, err = efs[1](ctx)
+        if err ~= nil then return nil, err end
+        local sum
+        sum, err = number_value(s0)
+        if err ~= nil then return nil, err end
+        for i = 2, #efs do
+            s0, err = efs[i](ctx)
+            if err ~= nil then return nil, err end
+            local val
+            val, err = number_value(s0)
+            if err ~= nil then return nil, err end
+
+            if operators[i - 1] == "+" then
+                sum = sum + val
+            else
+                sum = sum - val
+            end
+        end
+        return { sum }, nil
+    end
+    leaveStep(tl, "12 parse_additive_expr")
+    return evaler, nil
+end
+
+-- [13] MultiplicativeExpr ::=  UnionExpr ( ("*" | "div" | "idiv" | "mod") UnionExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_multiplicative_expr(tl)
+    enterStep(tl, "13 parse_multiplicative_expr")
+
+    local efs = {}
+    local operators = {}
+    while true do
+        local ef, err = parse_union_expr(tl)
+        if err ~= nil then
+            leaveStep(tl, "13 parse_multiplicative_expr")
+            return nil, err
+        end
+        efs[#efs + 1] = ef
+        local op
+        op, err = tl:readNexttokIfIsOneOfValue({ "*", "mod", "div", "idiv" })
+        if err ~= nil then
+            leaveStep(tl, "13 parse_multiplicative_expr")
+            return nil, err
+        end
+        if not op then break end
+        operators[#operators + 1] = op[1]
+    end
+    if #efs == 1 then return efs[1], nil end
+
+    local evaler = function(ctx)
+        local s0, err = efs[1](ctx)
+        if err ~= nil then return nil, err end
+        local result
+        result, err = number_value(s0)
+        if err ~= nil then return nil, err end
+        if not result then return nil, "number expected" end
+        for i = 2, #efs do
+            s0, err = efs[i](ctx)
+            if err ~= nil then return nil, err end
+            local val
+            val, err = number_value(s0)
+            if err ~= nil then return nil, err end
+
+            if operators[i - 1] == "*" then
+                result = result * val
+            elseif operators[i - 1] == "div" then
+                result = result / val
+            elseif operators[i - 1] == "idiv" then
+                local d = result / val
+                local sign = 1
+                if d < 0 then sign = -1 end
+                result = math.floor(math.abs(d)) * sign
+            elseif operators[i - 1] == "mod" then
+                result = result % val
+            else
+                return nil, "unknown operator in mult expression"
+            end
+        end
+        return { result }, nil
+    end
+
+    leaveStep(tl, "13 parse_multiplicative_expr")
+    return evaler, nil
+end
+
+-- [14] UnionExpr ::= IntersectExceptExpr ( ("union" | "|") IntersectExceptExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_union_expr(tl)
+    enterStep(tl, "14 parse_union_expr")
+    local ef, err = parse_intersect_except_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "14 parse_union_expr")
+        return nil, err
+    end
+    leaveStep(tl, "14 parse_union_expr")
+    return ef, nil
+end
+
+-- [15] IntersectExceptExpr  ::= InstanceofExpr ( ("intersect" | "except") InstanceofExpr )*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_intersect_except_expr(tl)
+    enterStep(tl, "15 parse_intersect_except_expr")
+    local ef, err = parse_instance_of_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "15 parse_intersect_except_expr")
+        return nil, err
+    end
+    leaveStep(tl, "15 parse_intersect_except_expr")
+    return ef, nil
+end
+
+-- [16] InstanceofExpr ::= TreatExpr ( "instance" "of" SequenceType )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_instance_of_expr(tl)
+    enterStep(tl, "16 parse_instance_of_expr")
+    local ef, err = parse_treat_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "16 parse_instance_of_expr")
+        return nil, err
+    end
+    leaveStep(tl, "16 parse_instance_of_expr")
+    return ef, nil
+end
+
+-- [17] TreatExpr ::= CastableExpr ( "treat" "as" SequenceType )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_treat_expr(tl)
+    enterStep(tl, "17 parse_treat_expr")
+    local ef, err = parse_castable_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "17 parse_treat_expr")
+        return nil, err
+    end
+    leaveStep(tl, "17 parse_treat_expr")
+    return ef, nil
+end
+
+-- [18] CastableExpr ::= CastExpr ( "castable" "as" SingleType )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_castable_expr(tl)
+    enterStep(tl, "18 parse_castable_expr")
+    local ef, err = parse_cast_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "18 parse_castable_expr")
+        return nil, err
+    end
+    leaveStep(tl, "18 parse_castable_expr")
+    return ef, nil
+end
+
+-- [19] CastExpr ::= UnaryExpr ( "cast" "as" SingleType )?
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_cast_expr(tl)
+    enterStep(tl, "19 parse_cast_expr")
+    local ef, err = parse_unary_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "19 parse_cast_expr")
+        return nil, err
+    end
+    leaveStep(tl, "19 parse_cast_expr")
+    return ef, nil
+end
+
+-- [20] UnaryExpr ::= ("-" | "+")* ValueExpr
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_unary_expr(tl)
+    enterStep(tl, "20 parse_unary_expr")
+    local mult = 1
+    while true do
+        local tok, err = tl:readNexttokIfIsOneOfValue({"+","-"})
+        if err ~= nil then
+            return nil, err
+        end
+        if tok == nil then
+            break
+        end
+        if tok[1] == "-" then mult = mult * -1 end
+    end
+    local ef, err = parse_value_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "20 parse_unary_expr")
+        return nil, err
+    end
+
+    local evaler = function (ctx)
+        if mult == -1 then
+            local seq, err = ef(ctx)
+            if err ~= nil then
+                return nil, err
+            end
+			flt, err = number_value(seq)
+			if err ~= nil then
+				return nil, err
+            end
+			return {flt * -1}, nil
+        end
+        return ef(ctx),nil
+    end
+    leaveStep(tl, "20 parse_unary_expr")
+    return evaler, nil
+end
+
+-- [21] ValueExpr ::= PathExpr
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_value_expr(tl)
+    enterStep(tl, "21 parse_value_expr")
+    local ef, err = parse_path_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "21 parse_value_expr")
+        return nil, err
+    end
+    leaveStep(tl, "21 parse_value_expr")
+    return ef, nil
+end
+
+-- [25] PathExpr ::= ("/" RelativePathExpr?) | ("//" RelativePathExpr) | RelativePathExpr
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_path_expr(tl)
+    enterStep(tl, "25 parse_path_expr")
+    local ef, err = parse_relative_path_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "25 parse_path_expr")
+        return nil, err
+    end
+    leaveStep(tl, "25 parse_path_expr")
+    return ef, nil
+end
+
+-- [26] RelativePathExpr ::= StepExpr (("/" | "//") StepExpr)*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_relative_path_expr(tl)
+    enterStep(tl, "26 parse_relative_path_expr")
+    local ef, err = parse_step_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "26 parse_relative_path_expr")
+        return nil, err
+    end
+    leaveStep(tl, "26 parse_relative_path_expr")
+    return ef, nil
+end
+
+-- [27] StepExpr := FilterExpr | AxisStep
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_step_expr(tl)
+    enterStep(tl, "27 parse_step_expr")
+    local ef, err = parse_filter_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "27 parse_step_expr")
+        return nil, err
+    end
+    leaveStep(tl, "27 parse_step_expr")
+    return ef, nil
+end
+
+-- [28] AxisStep ::= (ReverseStep | ForwardStep) PredicateList
+-- [39] PredicateList ::= Predicate*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_axis_step(tl)
+    enterStep(tl, "28 parse_axis_step")
+    local ef = function(ctx)
+        return { 123 }, nil
+    end
+    local err = nil
+    -- local ef, err = parse_union_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "28 parse_axis_step")
+        return nil, err
+    end
+    leaveStep(tl, "28 parse_axis_step")
+    return ef, nil
+end
+
+-- [38] FilterExpr ::= PrimaryExpr PredicateList
+-- [39] PredicateList ::= Predicate*
+function parse_filter_expr(tl)
+    enterStep(tl, "38 parse_filter_expr")
+    local ef, err = parse_primary_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "38 parse_filter_expr")
+        return nil, err
+    end
+    leaveStep(tl, "38 parse_filter_expr")
+    return ef, nil
+end
+
+-- [40] Predicate ::= "[" Expr "]"
+-- [41] PrimaryExpr ::= Literal | VarRef | ParenthesizedExpr | ContextItemExpr | FunctionCall
+function parse_primary_expr(tl)
+    enterStep(tl, "41 parse_primary_expr")
+    local nexttok, err = tl:read()
+    if err ~= nil then
+        leaveStep(tl, "41 parse_primary_expr")
+        return nil, err
+    end
+
+    -- StringLiteral
+    -- NumericLiteral
+    if nexttok[2] == "tokNumber" then
+        leaveStep(tl, "41 parse_primary_expr")
+        local evaler = function(ctx)
+            return { nexttok[1] }, nil
+        end
+        return evaler, nil
+    end
+    assert(false, "nyi")
+    -- ParenthesizedExpr
+    -- VarRef
+    -- FunctionCall
+
+    leaveStep(tl, "41 parse_primary_expr")
+    return s0, nil
+end
+
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function M.parse_xpath(tl)
+    local evaler, err = parse_expr(tl)
+    if err ~= nil then
+        return nil, err
+    end
+    return evaler, nil
+end
+
+
+return M
