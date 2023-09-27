@@ -1,7 +1,10 @@
 local M = {
     private = {},
+    funcs = {},
     dodebug = false,
     debugindent = "  ",
+    fnNS = "http://www.w3.org/2005/xpath-functions",
+    xsNS = "http://www.w3.org/2001/XMLSchema",
 }
 
 local debuglevel = 0
@@ -174,6 +177,15 @@ function tokenlist:read()
     return self[self.pos - 1], nil
 end
 
+---@return string?
+function tokenlist:unread()
+    if self.pos == 1 then
+        return "eof"
+    end
+    self.pos = self.pos - 1
+    return nil
+end
+
 ---@param tokvalues table
 ---@return token?
 ---@return string?
@@ -187,6 +199,22 @@ function tokenlist:readNexttokIfIsOneOfValue(tokvalues)
         end
     end
     return nil, nil
+end
+
+function tokenlist:nextTokIsType(typ)
+    if self.pos > #self then return false end
+    local t = self:peek()
+    return t[2] == typ
+end
+
+---@return boolean true if the next token is the provided type.
+function tokenlist:skipType(typ)
+    if self.pos > #self then return false end
+    local t = self:peek()
+    if t[2] == typ then
+        self:read()
+        return true
+    end
 end
 
 ---@param str string
@@ -280,6 +308,7 @@ function M.string_to_tokenlist(str)
             if nextrune == ':' then
                 tokens[#tokens + 1] = { string.sub(name, 1, -2), "tokDoubleColon" }
             else
+                unread_rune(runes)
                 tokens[#tokens + 1] = { name, "tokQName" }
             end
         elseif r == '"' or r == "'" then
@@ -320,7 +349,144 @@ local function number_value(sequence)
     return tonumber(sequence[1]), nil
 end
 
+local function boolean_value(seq)
+    if #seq == 0 then return false, nil end
+    if #seq > 1 then return false, "invalid argument for boolean value" end
+    local val = seq[1]
+    local ok = false
+    if type(val) == "string" then
+        ok = (val ~= "")
+    elseif type(val) == "number" then
+        ok = (val ~= 0 and val == val)
+    elseif type(val) == "boolean" then
+        ok = val
+    end
+    return ok, nil
+end
 
+local function docomparestring(op, left, right)
+    if op == "=" then
+        return left == right, nil
+    elseif op == "!=" then
+        return left ~= right, nil
+    elseif op == "<" then
+        return left < right, nil
+    elseif op == ">" then
+        return left > right, nil
+    elseif op == "<=" then
+        return left <= right, nil
+    elseif op == ">=" then
+        return left >= right, nil
+    else
+        return nil, "not implemented: op " .. op
+    end
+end
+
+
+local function docomparenumber(op, left, right)
+    if op == "=" then
+        return left == right, nil
+    elseif op == "!=" then
+        return left ~= right, nil
+    elseif op == "<" then
+        return left < right, nil
+    elseif op == ">" then
+        return left > right, nil
+    elseif op == "<=" then
+        return left <= right, nil
+    elseif op == ">=" then
+        return left >= right, nil
+    else
+        return nil, "not implemented: op " .. op
+    end
+end
+
+local function docomparefunc(op, leftitem, rightitem)
+    if type(leftitem) == "number" or type(rightitem) == "number" then
+        local x, err = docomparenumber(op, tonumber(leftitem), tonumber(rightitem))
+        return x, err
+    elseif type(leftitem) == "string" or type(rightitem) == "string" then
+        local x, err = docomparestring(op, tostring(leftitem), tostring(rightitem))
+        return x, err
+    end
+end
+
+local function docompare(op, lhs, rhs)
+    local evaler = function(ctx)
+        local left, right, err, ok
+        left, err = lhs(ctx)
+        if err ~= nil then return nil, err end
+        right, err = rhs(ctx)
+        if err ~= nil then return nil, err end
+        for _, leftitem in ipairs(left) do
+            for _, rightitem in ipairs(right) do
+                ok, err = docomparefunc(op, leftitem, rightitem)
+                if err ~= nil then return nil, err end
+                if ok then return { true }, nil end
+            end
+        end
+
+        return { false }, nil
+    end
+    return evaler, nil
+end
+
+local function fnFalse(ctx, seq)
+    return {false}, nil
+end
+
+local function fnTrue(ctx, seq)
+    return {true}, nil
+end
+
+local funcs = {
+    -- function name, namespace, function, minarg, maxarg
+    { "false", M.fnNS, fnFalse, 0, 0 },
+    { "true",  M.fnNS, fnTrue,  0, 0 },
+}
+
+local function registerFunction(func)
+    M.funcs[func[2] .. " " .. func[1]] = func
+end
+
+for _, func in ipairs(funcs) do
+    registerFunction(func)
+end
+
+local function getFunction(namespace, fname)
+    return M.funcs[namespace .. " " .. fname]
+end
+
+local function callFunction(fname, seq, ctx)
+    local fn = {}
+    for str in string.gmatch(fname, "([^:]+)") do
+        table.insert(fn, str)
+    end
+    local namespace = M.fnNS
+    if #fn == 2 then
+        namespace = ctx.namespaces[fn[1]]
+        fname = fn[2]
+    end
+    local func = getFunction(namespace, fname)
+    if func then
+        return func[3](ctx, seq)
+    end
+
+    -- parts := strings.Split(name, ":")
+    -- var ns string
+    -- var ok bool
+    -- if len(parts) == 2 {
+    -- 	if ns, ok = ctx.Namespaces[parts[0]]; ok {
+    -- 		name = parts[1]
+    -- 	} else {
+    -- 		return nil, fmt.Errorf("Could not find namespace for prefix %q", parts[0])
+    -- 	}
+    -- } else {
+    -- 	ns = fnNS
+    -- }
+
+    return {}, "Could not find function " .. fname .. " with name space " .. namespace
+end
 
 -------------------------
 
@@ -330,8 +496,8 @@ local function enterStep(tl, step)
     if M.dodebug then
         local token, eof = tl:peek()
         if eof then return end
-        token = token or {"-","-"}
-        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]),token[2]))
+        token = token or { "-", "-" }
+        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
         debuglevel = debuglevel + 1
     end
 end
@@ -341,9 +507,9 @@ end
 local function leaveStep(tl, step)
     if M.dodebug then
         local token, _ = tl:peek()
-        token = token or {"-","-"}
+        token = token or { "-", "-" }
         debuglevel = debuglevel - 1
-        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step,tostring(token[1]),token[2] ))
+        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
     end
 end
 
@@ -396,13 +562,41 @@ end
 ---@return string? error
 function parse_or_expr(tl)
     enterStep(tl, "8 parse_or_expr")
-    local ef, err = parse_and_expr(tl)
-    if err ~= nil then
+    local err
+    local efs = {}
+    while true do
+        efs[#efs+1], err = parse_and_expr(tl)
+        if err ~= nil then
+            leaveStep(tl, "8 parse_or_expr")
+            return nil, err
+        end
+        if not tl:readNexttokIfIsOneOfValue({"or"}) then
+            break
+        end
+    end
+    if #efs == 1 then
         leaveStep(tl, "8 parse_or_expr")
-        return nil, err
+        return efs[1], nil
+    end
+
+    local evaler = function(ctx)
+        local seq, err
+        for _, ef in ipairs(efs) do
+            seq, err = ef(ctx)
+            if err ~= nil then
+                return nil, err
+            end
+            local bv
+            bv, err = boolean_value(seq)
+            if err ~= nil then
+                return nil, err
+            end
+            if bv then return { true }, nil end
+        end
+        return { false }, nil
     end
     leaveStep(tl, "8 parse_or_expr")
-    return ef, nil
+    return evaler, nil
 end
 
 -- [9] AndExpr ::= ComparisonExpr ( "and" ComparisonExpr )*
@@ -428,13 +622,32 @@ end
 ---@return string? error
 function parse_comparison_expr(tl)
     enterStep(tl, "10 parse_comparison_expr")
-    local ef, err = parse_range_expr(tl)
+    local lhs, err = parse_range_expr(tl)
     if err ~= nil then
         leaveStep(tl, "10 parse_comparison_expr")
         return nil, err
     end
+    local op
+    op, err = tl:readNexttokIfIsOneOfValue({ "=", "<", ">", "<=", ">=", "!=", "eq", "ne", "lt", "le", "gt", "ge", "is",
+        "<<", ">>" })
+    if err ~= nil then
+        leaveStep(tl, "10 parse_comparison_expr")
+        return nil, err
+    end
+    if not op then
+        leaveStep(tl, "10 parse_comparison_expr")
+        return lhs, nil
+    end
+
+    local rhs
+    rhs, err = parse_range_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "10 parse_comparison_expr")
+        return nil, err
+    end
+
     leaveStep(tl, "10 parse_comparison_expr")
-    return ef, nil
+    return docompare(op[1], lhs, rhs)
 end
 
 -- [11] RangeExpr  ::=  AdditiveExpr ( "to" AdditiveExpr )?
@@ -479,7 +692,10 @@ function parse_additive_expr(tl)
         if not op then break end
         operators[#operators + 1] = op[1]
     end
-    if #efs == 1 then return efs[1], nil end
+    if #efs == 1 then
+        leaveStep(tl, "12 parse_additive_expr")
+        return efs[1], nil
+    end
 
     local evaler = function(ctx)
         local s0, err = efs[1](ctx)
@@ -532,7 +748,10 @@ function parse_multiplicative_expr(tl)
         if not op then break end
         operators[#operators + 1] = op[1]
     end
-    if #efs == 1 then return efs[1], nil end
+    if #efs == 1 then
+        leaveStep(tl, "13 parse_multiplicative_expr")
+        return efs[1], nil
+    end
 
     local evaler = function(ctx)
         local s0, err = efs[1](ctx)
@@ -675,7 +894,7 @@ function parse_unary_expr(tl)
     enterStep(tl, "20 parse_unary_expr")
     local mult = 1
     while true do
-        local tok, err = tl:readNexttokIfIsOneOfValue({"+","-"})
+        local tok, err = tl:readNexttokIfIsOneOfValue({ "+", "-" })
         if err ~= nil then
             return nil, err
         end
@@ -689,20 +908,21 @@ function parse_unary_expr(tl)
         leaveStep(tl, "20 parse_unary_expr")
         return nil, err
     end
+    if ef == nil then return function() return {}, nil end, nil end
 
-    local evaler = function (ctx)
+    local evaler = function(ctx)
         if mult == -1 then
             local seq, err = ef(ctx)
             if err ~= nil then
                 return nil, err
             end
-			flt, err = number_value(seq)
-			if err ~= nil then
-				return nil, err
+            flt, err = number_value(seq)
+            if err ~= nil then
+                return nil, err
             end
-			return {flt * -1}, nil
+            return { flt * -1 }, nil
         end
-        return ef(ctx),nil
+        return ef(ctx)
     end
     leaveStep(tl, "20 parse_unary_expr")
     return evaler, nil
@@ -795,6 +1015,10 @@ end
 
 -- [38] FilterExpr ::= PrimaryExpr PredicateList
 -- [39] PredicateList ::= Predicate*
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
 function parse_filter_expr(tl)
     enterStep(tl, "38 parse_filter_expr")
     local ef, err = parse_primary_expr(tl)
@@ -817,6 +1041,13 @@ function parse_primary_expr(tl)
     end
 
     -- StringLiteral
+    if nexttok[2] == "tokString" then
+        leaveStep(tl, "41 parse_primary_expr")
+        local evaler = function(ctx)
+            return { nexttok[1] }, nil
+        end
+        return evaler, nil
+    end
     -- NumericLiteral
     if nexttok[2] == "tokNumber" then
         leaveStep(tl, "41 parse_primary_expr")
@@ -825,13 +1056,59 @@ function parse_primary_expr(tl)
         end
         return evaler, nil
     end
-    assert(false, "nyi")
-    -- ParenthesizedExpr
+
     -- VarRef
+    -- ParenthesizedExpr
+
+
     -- FunctionCall
+    if nexttok[2] == "tokQName" then
+        if tl:nextTokIsType("tokOpenParen") then
+            tl:unread()
+            local ef
+            ef, err = parse_function_call(tl)
+            if err ~= nil then
+                leaveStep(tl, "41 parse_primary_expr: " .. err)
+                return nil, err
+            end
+            leaveStep(tl, "41 parse_primary_expr")
+            return ef, nil
+        end
+    end
+    assert(false, "nyi")
 
     leaveStep(tl, "41 parse_primary_expr")
     return s0, nil
+end
+
+-- [48] FunctionCall ::= QName "(" (ExprSingle ("," ExprSingle)*)? ")"
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_function_call(tl)
+    enterStep(tl, "48 parse_function_call")
+    local function_name_token, err = tl:read()
+    if err ~= nil then
+        leaveStep(tl, "48 parse_function_call")
+        return nil, err
+    end
+    if function_name_token == nil then
+        return nil, "function name token expected"
+    end
+    tl:skipType("tokOpenParen")
+    if tl:nextTokIsType("tokCloseParen") then
+        tl:read()
+        local evaler = function(ctx)
+            local x, y = callFunction(function_name_token[1], {}, ctx)
+            return x, y
+        end
+        return evaler, nil
+    end
+
+    printtable("function_name", function_name_token)
+    leaveStep(tl, "48 parse_function_call")
+    return evaler, nil
 end
 
 ---@param tl tokenlist
@@ -844,6 +1121,5 @@ function M.parse_xpath(tl)
     end
     return evaler, nil
 end
-
 
 return M

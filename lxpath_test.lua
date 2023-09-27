@@ -41,6 +41,7 @@ function TestTokenizer:test1()
         {"123.4", { {123.4,"tokNumber"} }},
         {" 2 +2", { {2,"tokNumber"},{'+',"tokOperator"},{2,"tokNumber"} }},
         {" abc // def ", { {"abc","tokQName"},{'//',"tokOperator"},{"def","tokQName"} }},
+        {" false() ", { {"false","tokQName"},{'(',"tokOpenParen"},{')',"tokCloseParen"}  }}
     }
 
     for _, tc in ipairs(testdata) do
@@ -51,13 +52,29 @@ end
 
 function TestTokenizer:test_parse_simple()
     local testdata = {
+        { "+-+-+2", { 2.0 }},
+        { "+-+-+-+ 2", { -2.0 }},
+        { "2 = 4", { false }},
+        { "2 = 2", { true }},
+        { "2 < 2", { false }},
+        { "2 < 3", { true }},
+        { "3.4 > 3.1", { true }},
+        { "3.4 != 3.1", { true }},
+        { "'abc' = 'abc'", { true }},
+        { "'aA' < 'aa'", { true }},
+        { "'aA' != 'aa'", { true }},
+        { "false() or true()", { true }},
+        { "false()", { false }},
         { "-3.5", { -3.5 }},
         { "5 + 4", { 9.0 }},
+        { "1 + 5 * 4", { 21.0 }},
         { "10 div 5", { 2.0 }},
         { "10 idiv 3", { 3.0 }},
         { "3 idiv -2", { -1.0 }},
         { "-3 idiv -2", { 1.0 }},
         { "-3.5 idiv 3", { -1.0 }},
+        { "7 div 2 = 3.5", { true }},
+        { "8 mod 2 = 0 ", { true }},
     }
     for _, td in ipairs(testdata) do
         local str = td[1]
@@ -69,13 +86,14 @@ function TestTokenizer:test_parse_simple()
 
         local ef, err = tokenize.parse_xpath(toks)
         if err ~= nil then
-            luaunit.fail(err)
+            luaunit.fail(err .. td[2])
         end
         if not ef then
             luaunit.fail("function expected, got nil")
         end
+        ---@diagnostic disable-next-line
         local seq = ef()
-        luaunit.assertEquals(seq,td[2])
+        luaunit.assertEquals(seq,td[2],td[1])
 
 
     end
