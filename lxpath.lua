@@ -364,6 +364,18 @@ local function boolean_value(seq)
     return ok, nil
 end
 
+local function string_value(seq)
+    local ret = {}
+    for _, itm in ipairs(seq) do
+        if tonumber(itm) and itm ~= itm then
+            ret[#ret + 1] = 'NaN'
+        else
+            ret[#ret + 1] = tostring(itm)
+        end
+    end
+    return table.concat(ret)
+end
+
 local function docomparestring(op, left, right)
     if op == "=" then
         return left == right, nil
@@ -431,18 +443,42 @@ local function docompare(op, lhs, rhs)
     return evaler, nil
 end
 
+local function fnConcat(ctx, seq)
+    local ret = {}
+    for _, itm in ipairs(seq) do
+        ret[#ret + 1] = string_value(itm)
+    end
+    return { table.concat(ret) }
+end
+
 local function fnFalse(ctx, seq)
-    return {false}, nil
+    return { false }, nil
+end
+
+local nan = 0 / 0
+
+local function fnNumber(ctx, seq)
+    local x = number_value(seq[1])
+    if not x then return { nan }, nil end
+    return { x }, nil
+end
+
+local function fnString(ctx, seq)
+    local x = string_value(seq[1])
+    return { x }, nil
 end
 
 local function fnTrue(ctx, seq)
-    return {true}, nil
+    return { true }, nil
 end
 
 local funcs = {
     -- function name, namespace, function, minarg, maxarg
-    { "false", M.fnNS, fnFalse, 0, 0 },
-    { "true",  M.fnNS, fnTrue,  0, 0 },
+    { "concat", M.fnNS, fnConcat, 0, -1 },
+    { "false",  M.fnNS, fnFalse,  0, 0 },
+    { "number", M.fnNS, fnNumber, 1, 1 },
+    { "string", M.fnNS, fnString, 1, 1 },
+    { "true",   M.fnNS, fnTrue,   0, 0 },
 }
 
 local function registerFunction(func)
@@ -488,6 +524,42 @@ local function callFunction(fname, seq, ctx)
     return {}, "Could not find function " .. fname .. " with name space " .. namespace
 end
 
+
+local function filter(ctx, f)
+    local res = {}
+    local predicate,err = f(ctx)
+    if err then
+        return nil, err
+    end
+
+    if #predicate == 1 then
+        local idx = tonumber(predicate[1])
+        if idx then
+            if #ctx.context >= idx then
+                return {ctx.context[idx]}, nil
+            else
+                return {}, nil
+            end
+        end
+    end
+
+    local copysequence = ctx.context
+    for _, itm in ipairs(copysequence) do
+        ctx.context = {itm}
+        ctx.pos = 1
+        predicate, err = f(ctx)
+        if err then
+            return nil, err
+        end
+        if boolean_value(predicate) then
+            res[#res+1] = itm
+        end
+    end
+    ctx.context = res
+    return res, nil
+end
+
+
 -------------------------
 
 ---@param tl tokenlist
@@ -529,13 +601,39 @@ local parse_expr, parse_expr_single, parse_or_expr, parse_and_expr, parse_compar
 function parse_expr(tl)
     enterStep(tl, "2 parseExpr")
     local efs = {}
-    local ef, err = parse_expr_single(tl)
-    if err ~= nil then
-        leaveStep(tl, "2 parseExpr")
-        return nil, err
+    while true do
+        local ef, err = parse_expr_single(tl)
+        if err ~= nil then
+            leaveStep(tl, "2 parseExpr")
+            return nil, err
+        end
+        efs[#efs + 1] = ef
+        if not tl:nextTokIsType("tokComma") then
+            break
+        end
+        tl:read()
     end
+    if #efs == 1 then
+        leaveStep(tl, "2 parseExpr")
+        return efs[1], nil
+    end
+    local evaler = function(ctx)
+        local ret = {}
+        local seq
+        for _, ef in ipairs(efs) do
+            seq, err = ef(ctx)
+            if err then
+                return nil, err
+            end
+            for _, itm in ipairs(seq) do
+                ret[#ret + 1] = itm
+            end
+        end
+        return ret, nil
+    end
+
     leaveStep(tl, "2 parseExpr")
-    return ef, nil
+    return evaler, nil
 end
 
 -- [3] ExprSingle ::= ForExpr | QuantifiedExpr | IfExpr | OrExpr
@@ -565,12 +663,12 @@ function parse_or_expr(tl)
     local err
     local efs = {}
     while true do
-        efs[#efs+1], err = parse_and_expr(tl)
+        efs[#efs + 1], err = parse_and_expr(tl)
         if err ~= nil then
             leaveStep(tl, "8 parse_or_expr")
             return nil, err
         end
-        if not tl:readNexttokIfIsOneOfValue({"or"}) then
+        if not tl:readNexttokIfIsOneOfValue({ "or" }) then
             break
         end
     end
@@ -1026,6 +1124,31 @@ function parse_filter_expr(tl)
         leaveStep(tl, "38 parse_filter_expr")
         return nil, err
     end
+    while true do
+        if tl:nextTokIsType("tokOpenBracket") then
+            tl:read()
+            local f, err = parse_expr(tl)
+            if err ~= nil then
+                leaveStep(tl, "38 parse_filter_expr")
+                return nil, err
+            end
+            if not tl:skipType("tokCloseBracket") then
+                leaveStep(tl, "38 parse_filter_expr")
+                return nil, "] expected"
+            end
+            local filterfunc = function (ctx)
+                local seq, err = ef(ctx)
+                if err then
+                    return nil, err
+                end
+
+                ctx.context = seq
+                return filter(ctx,f)
+            end
+            return filterfunc,nil
+        end
+        break
+    end
     leaveStep(tl, "38 parse_filter_expr")
     return ef, nil
 end
@@ -1057,9 +1180,24 @@ function parse_primary_expr(tl)
         return evaler, nil
     end
 
-    -- VarRef
     -- ParenthesizedExpr
+    if nexttok[2] == "tokOpenParen" then
+        local ef, err = parse_parenthesized_expr(tl)
+        if err ~= nil then
+            leaveStep(tl, "41 parse_primary_expr")
+            return nil, err
+        end
+        return ef, nil
+    end
 
+
+    -- VarRef
+    if nexttok[2] == "tokVarname" then
+        local evaler = function(ctx)
+            return { ctx.vars[nexttok[1]] }, nil
+        end
+        return evaler, nil
+    end
 
     -- FunctionCall
     if nexttok[2] == "tokQName" then
@@ -1079,6 +1217,39 @@ function parse_primary_expr(tl)
 
     leaveStep(tl, "41 parse_primary_expr")
     return s0, nil
+end
+
+-- [46] ParenthesizedExpr ::= "(" Expr? ")"
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_parenthesized_expr(tl)
+    enterStep(tl, "46 parse_parenthesized_expr")
+    -- shortcut for empty sequence ():
+    if tl:nextTokIsType("tokCloseParen") then
+        tl:read()
+        return function(ctx) return {}, nil end
+    end
+
+    local ef, err = parse_expr(tl)
+    if err ~= nil then
+        leaveStep(tl, "46 parse_parenthesized_expr (err)")
+        return nil, err
+    end
+    if not tl:skipType("tokCloseParen") then
+        leaveStep(tl, "46 parse_parenthesized_expr (err)")
+        return nil, err
+    end
+    local evaler = function(ctx)
+        local seq, err = ef(ctx)
+        if err ~= nil then
+            return nil, err
+        end
+        return seq, nil
+    end
+    leaveStep(tl, "46 parse_parenthesized_expr")
+    return evaler, nil
 end
 
 -- [48] FunctionCall ::= QName "(" (ExprSingle ("," ExprSingle)*)? ")"
@@ -1106,7 +1277,37 @@ function parse_function_call(tl)
         return evaler, nil
     end
 
-    printtable("function_name", function_name_token)
+    local efs = {}
+    while true do
+        local es
+        es, err = parse_expr_single(tl)
+        if err ~= nil then
+            leaveStep(tl, "48 parse_function_call")
+            return nil, err
+        end
+        efs[#efs + 1] = es
+        if not tl:nextTokIsType("tokComma") then
+            leaveStep(tl, "48 parse_function_call")
+            break
+        end
+        tl:read()
+    end
+
+    if not tl:skipType("tokCloseParen") then
+        return nil, ") expected"
+    end
+
+    local evaler = function(ctx)
+        local arguments = {}
+        -- TODO: save context and restore afterwards
+        local seq, err
+        for _, ef in ipairs(efs) do
+            seq, err = ef(ctx)
+            if err ~= nil then return nil, err end
+            arguments[#arguments + 1] = seq
+        end
+        return callFunction(function_name_token[1], arguments, ctx)
+    end
     leaveStep(tl, "48 parse_function_call")
     return evaler, nil
 end
