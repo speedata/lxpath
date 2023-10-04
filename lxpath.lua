@@ -527,7 +527,7 @@ end
 
 local function filter(ctx, f)
     local res = {}
-    local predicate,err = f(ctx)
+    local predicate, err = f(ctx)
     if err then
         return nil, err
     end
@@ -535,31 +535,87 @@ local function filter(ctx, f)
     if #predicate == 1 then
         local idx = tonumber(predicate[1])
         if idx then
-            if #ctx.context >= idx then
-                return {ctx.context[idx]}, nil
+            if #ctx.sequence >= idx then
+                return { ctx.sequence[idx] }, nil
             else
                 return {}, nil
             end
         end
     end
 
-    local copysequence = ctx.context
+    local copysequence = ctx.sequence
     for _, itm in ipairs(copysequence) do
-        ctx.context = {itm}
+        ctx.sequence = { itm }
         ctx.pos = 1
         predicate, err = f(ctx)
         if err then
             return nil, err
         end
         if boolean_value(predicate) then
-            res[#res+1] = itm
+            res[#res + 1] = itm
         end
     end
-    ctx.context = res
+    ctx.sequence = res
     return res, nil
 end
 
 
+-------------------------
+
+---@class context
+---@field sequence table
+---@field xmldoc table
+---@field namespaces table
+---@field vars table
+local context = {}
+
+function context:new(o)
+    o = o or {} -- create object if user does not provide one
+    setmetatable(o, self)
+    self.__index = self
+    return o
+end
+
+---@alias xmlelement table
+
+---@return xmlelement?
+---@return string? Error message
+function context:root()
+    for _, elt in ipairs(self.xmldoc) do
+        if type(elt) == "table" then
+            self.sequence = { elt }
+            return elt, nil
+        end
+    end
+    return nil, "no root element found"
+end
+
+function context:childaxis()
+    local seq = {}
+    for _, elt in ipairs(self.sequence) do
+        if type(elt) == "table" then
+            if elt[".__type"] and elt[".__type"] == "element" then
+                for _, cld in ipairs(elt) do
+                    seq[#seq + 1] = cld
+                end
+            elseif elt[".__type"] and elt[".__type"] == "document" then
+                for _, cld in ipairs(elt) do
+                    seq[#seq + 1] = cld
+                end
+            else
+                assert(false, "table, not element")
+            end
+        elseif type(elt) == "string" then
+            seq[#seq + 1] = elt
+        else
+            w("something else")
+        end
+    end
+    self.sequence = seq
+    return seq, nil
+end
+
+M.context = context
 -------------------------
 
 ---@param tl tokenlist
@@ -585,14 +641,15 @@ local function leaveStep(tl, step)
     end
 end
 
+---------------------------
+
 local parse_expr, parse_expr_single, parse_or_expr, parse_and_expr, parse_comparison_expr, parse_range_expr, parse_additive_expr, parse_multiplicative_expr
 
 ---@type table sequence
 
----@class context
-
 
 ---@alias evalfunc function(context) sequence?, string?
+---@alias testfunc function(context) boolean?, string?
 
 ---@param tl tokenlist
 ---@return evalfunc?
@@ -791,7 +848,7 @@ function parse_additive_expr(tl)
         operators[#operators + 1] = op[1]
     end
     if #efs == 1 then
-        leaveStep(tl, "12 parse_additive_expr")
+        leaveStep(tl, "12 parse_additive_expr (#efs == 1)")
         return efs[1], nil
     end
 
@@ -833,7 +890,7 @@ function parse_multiplicative_expr(tl)
     while true do
         local ef, err = parse_union_expr(tl)
         if err ~= nil then
-            leaveStep(tl, "13 parse_multiplicative_expr")
+            leaveStep(tl, "13 parse_multiplicative_expr (ue err)")
             return nil, err
         end
         efs[#efs + 1] = ef
@@ -847,7 +904,7 @@ function parse_multiplicative_expr(tl)
         operators[#operators + 1] = op[1]
     end
     if #efs == 1 then
-        leaveStep(tl, "13 parse_multiplicative_expr")
+        leaveStep(tl, "13 parse_multiplicative_expr #efs 1")
         return efs[1], nil
     end
 
@@ -883,7 +940,7 @@ function parse_multiplicative_expr(tl)
         return { result }, nil
     end
 
-    leaveStep(tl, "13 parse_multiplicative_expr")
+    leaveStep(tl, "13 parse_multiplicative_expr (leave)")
     return evaler, nil
 end
 
@@ -994,6 +1051,7 @@ function parse_unary_expr(tl)
     while true do
         local tok, err = tl:readNexttokIfIsOneOfValue({ "+", "-" })
         if err ~= nil then
+            leaveStep(tl, "20 parse_unary_expr (err)")
             return nil, err
         end
         if tok == nil then
@@ -1001,12 +1059,16 @@ function parse_unary_expr(tl)
         end
         if tok[1] == "-" then mult = mult * -1 end
     end
+
     local ef, err = parse_value_expr(tl)
     if err ~= nil then
         leaveStep(tl, "20 parse_unary_expr")
         return nil, err
     end
-    if ef == nil then return function() return {}, nil end, nil end
+    if ef == nil then
+        leaveStep(tl, "20 parse_unary_expr (nil ef)")
+        return function() return {}, nil end, nil
+    end
 
     local evaler = function(ctx)
         if mult == -1 then
@@ -1049,11 +1111,21 @@ end
 ---@return string? error
 function parse_path_expr(tl)
     enterStep(tl, "25 parse_path_expr")
+
+    local op = tl:readNexttokIfIsOneOfValue({ "/", "//" })
     local ef, err = parse_relative_path_expr(tl)
     if err ~= nil then
         leaveStep(tl, "25 parse_path_expr")
         return nil, err
     end
+    if op then
+        if op[1] == "/" then
+            -- print("/")
+        else
+            assert(false, "nyi")
+        end
+    end
+
     leaveStep(tl, "25 parse_path_expr")
     return ef, nil
 end
@@ -1065,13 +1137,45 @@ end
 ---@return string? error
 function parse_relative_path_expr(tl)
     enterStep(tl, "26 parse_relative_path_expr")
-    local ef, err = parse_step_expr(tl)
-    if err ~= nil then
+    local efs = {}
+    while true do
+        local ef, err = parse_step_expr(tl)
+        if err ~= nil then
+            leaveStep(tl, "26 parse_relative_path_expr")
+            return nil, err
+        end
+        efs[#efs + 1] = ef
+        if not tl:readNexttokIfIsOneOfValue { "/", "//" } then
+            break
+        end
+    end
+    if #efs == 1 then
         leaveStep(tl, "26 parse_relative_path_expr")
-        return nil, err
+        return efs[1], nil
+    end
+
+    local evaler = function(ctx)
+        local retseq
+        for i = 1, #efs do
+            retseq = {}
+            local copysequence = ctx.sequence
+            local ef = efs[i]
+            for _, itm in ipairs(copysequence) do
+                context.sequence = { itm }
+                local seq, err = ef(ctx)
+                if err then
+                    return nil, err
+                end
+                for _, val in ipairs(seq) do
+                    retseq[#retseq + 1] = val
+                end
+            end
+            ctx.sequence = retseq
+        end
+        return retseq, nil
     end
     leaveStep(tl, "26 parse_relative_path_expr")
-    return ef, nil
+    return evaler, nil
 end
 
 -- [27] StepExpr := FilterExpr | AxisStep
@@ -1083,10 +1187,17 @@ function parse_step_expr(tl)
     enterStep(tl, "27 parse_step_expr")
     local ef, err = parse_filter_expr(tl)
     if err ~= nil then
-        leaveStep(tl, "27 parse_step_expr")
+        leaveStep(tl, "27 parse_step_expr (err nil)")
         return nil, err
     end
-    leaveStep(tl, "27 parse_step_expr")
+    if not ef then
+        ef, err = parse_axis_step(tl)
+        if err ~= nil then
+            leaveStep(tl, "27 parse_step_expr")
+            return nil, err
+        end
+    end
+    leaveStep(tl, "27 parse_step_expr (leave)")
     return ef, nil
 end
 
@@ -1098,17 +1209,98 @@ end
 ---@return string? error
 function parse_axis_step(tl)
     enterStep(tl, "28 parse_axis_step")
-    local ef = function(ctx)
-        return { 123 }, nil
-    end
     local err = nil
-    -- local ef, err = parse_union_expr(tl)
+    local ef
+    ef, err = parse_forward_step(tl)
     if err ~= nil then
         leaveStep(tl, "28 parse_axis_step")
         return nil, err
     end
     leaveStep(tl, "28 parse_axis_step")
     return ef, nil
+end
+
+-- [29] ForwardStep ::= (ForwardAxis NodeTest) | AbbrevForwardStep
+-- [31] AbbrevForwardStep ::= "@"? NodeTest
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_forward_step(tl)
+    enterStep(tl, "29 parse_forward_step")
+    local err = nil
+    local tf
+
+    local stepAxis = "axisChild"
+    tf, err = parse_node_test(tl)
+    if err then
+        leaveStep(tl, "29 parse_forward_step")
+        return nil, err
+    end
+    local evaler = function(ctx)
+        if stepAxis == "axisChild" then
+            ctx:childaxis()
+        else
+            assert(false, "nyi")
+        end
+        if not tf then return nil, "test func is nil" end
+        local ret = {}
+        for _, itm in ipairs(ctx.sequence) do
+            if tf(itm) then
+                ret[#ret + 1] = itm
+            end
+        end
+        return ret, nil
+    end
+
+    leaveStep(tl, "29 parse_forward_step")
+
+    return evaler, nil
+end
+
+-- [35] NodeTest ::= KindTest | NameTest
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_node_test(tl)
+    enterStep(tl, "35 parse_node_test")
+    local tf, err
+    tf, err = parse_name_test(tl)
+    if err then
+        leaveStep(tl, "35 parse_node_test")
+        return nil, err
+    end
+    leaveStep(tl, "35 parse_node_test")
+    return tf, nil
+end
+
+-- [36] NameTest ::= QName | Wildcard
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_name_test(tl)
+    enterStep(tl, "36 parse_name_test")
+    local tf
+    if tl:nextTokIsType("tokQName") then
+        local n, err = tl:read()
+        if err then
+            leaveStep(tl, "36 parse_name_test")
+            return nil, err
+        end
+        if not n then
+            return nil, "qname should not be empty"
+        end
+        tf = function(itm)
+            if type(itm) == "table" and itm[".__type"] == "element" then
+                return itm[".__name"] == n[1]
+            end
+            return false
+        end
+    end
+    leaveStep(tl, "36 parse_name_test")
+    return tf, nil
 end
 
 -- [38] FilterExpr ::= PrimaryExpr PredicateList
@@ -1136,16 +1328,17 @@ function parse_filter_expr(tl)
                 leaveStep(tl, "38 parse_filter_expr")
                 return nil, "] expected"
             end
-            local filterfunc = function (ctx)
+            local filterfunc = function(ctx)
                 local seq, err = ef(ctx)
                 if err then
                     return nil, err
                 end
 
-                ctx.context = seq
-                return filter(ctx,f)
+                ctx.sequence = seq
+                return filter(ctx, f)
             end
-            return filterfunc,nil
+            leaveStep(tl, "38 parse_filter_expr")
+            return filterfunc, nil
         end
         break
     end
@@ -1165,15 +1358,16 @@ function parse_primary_expr(tl)
 
     -- StringLiteral
     if nexttok[2] == "tokString" then
-        leaveStep(tl, "41 parse_primary_expr")
+        leaveStep(tl, "41 parse_primary_expr (sl)")
         local evaler = function(ctx)
             return { nexttok[1] }, nil
         end
         return evaler, nil
     end
+
     -- NumericLiteral
     if nexttok[2] == "tokNumber" then
-        leaveStep(tl, "41 parse_primary_expr")
+        leaveStep(tl, "41 parse_primary_expr (nl)")
         local evaler = function(ctx)
             return { nexttok[1] }, nil
         end
@@ -1187,6 +1381,7 @@ function parse_primary_expr(tl)
             leaveStep(tl, "41 parse_primary_expr")
             return nil, err
         end
+        leaveStep(tl, "41 parse_primary_expr (op)")
         return ef, nil
     end
 
@@ -1196,6 +1391,16 @@ function parse_primary_expr(tl)
         local evaler = function(ctx)
             return { ctx.vars[nexttok[1]] }, nil
         end
+        leaveStep(tl, "41 parse_primary_expr (vr)")
+        return evaler, nil
+    end
+
+
+    if nexttok[2] == "tokOperator" and nexttok[1] == "." then
+        local evaler = function(ctx)
+            return ctx.sequence, nil
+        end
+        leaveStep(tl, "41 parse_primary_expr (ci)")
         return evaler, nil
     end
 
@@ -1209,14 +1414,13 @@ function parse_primary_expr(tl)
                 leaveStep(tl, "41 parse_primary_expr: " .. err)
                 return nil, err
             end
-            leaveStep(tl, "41 parse_primary_expr")
+            leaveStep(tl, "41 parse_primary_expr (fc)")
             return ef, nil
         end
     end
-    assert(false, "nyi")
-
-    leaveStep(tl, "41 parse_primary_expr")
-    return s0, nil
+    tl:unread()
+    leaveStep(tl, "41 parse_primary_expr (exit)")
+    return nil, nil
 end
 
 -- [46] ParenthesizedExpr ::= "(" Expr? ")"
