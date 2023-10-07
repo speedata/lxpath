@@ -451,6 +451,11 @@ local function fnConcat(ctx, seq)
     return { table.concat(ret) }
 end
 
+local function fnCount(ctx, seq)
+    local firstarg = seq[1]
+    return { #firstarg }, nil
+end
+
 local function fnFalse(ctx, seq)
     return { false }, nil
 end
@@ -475,6 +480,7 @@ end
 local funcs = {
     -- function name, namespace, function, minarg, maxarg
     { "concat", M.fnNS, fnConcat, 0, -1 },
+    { "count",  M.fnNS, fnCount,  1, 1 },
     { "false",  M.fnNS, fnFalse,  0, 0 },
     { "number", M.fnNS, fnNumber, 1, 1 },
     { "string", M.fnNS, fnString, 1, 1 },
@@ -608,7 +614,7 @@ function context:childaxis()
         elseif type(elt) == "string" then
             seq[#seq + 1] = elt
         else
-            w("something else")
+            print("something else", type)
         end
     end
     self.sequence = seq
