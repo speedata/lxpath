@@ -9,6 +9,8 @@ local M = {
 
 local debuglevel = 0
 
+local nan = 0 / 0
+
 local function unread_rune(tbl)
     tbl.pos = tbl.pos - 1
 end
@@ -366,9 +368,15 @@ end
 
 local function string_value(seq)
     local ret = {}
+    if type(seq) == "string" then return seq end
     for _, itm in ipairs(seq) do
         if tonumber(itm) and itm ~= itm then
             ret[#ret + 1] = 'NaN'
+        elseif type(itm) == "table" and itm[".__type"] == "element" then
+            for _, cld in ipairs(itm) do
+                local x = string_value(cld)
+                ret[#ret + 1] = x
+            end
         else
             ret[#ret + 1] = tostring(itm)
         end
@@ -460,7 +468,74 @@ local function fnFalse(ctx, seq)
     return { false }, nil
 end
 
-local nan = 0 / 0
+local function fnLocalName(ctx, seq)
+    local input_seq = ctx.sequence
+    if #seq == 1 then
+        input_seq = seq[1]
+    end
+    -- first item
+    seq = input_seq
+    if #seq == 0 then
+        return { "" }, nil
+    end
+    if #seq > 1 then
+        return {}, "sequence too long"
+    end
+    -- first element
+    seq = seq[1]
+
+    if type(seq) == "table" and seq[".__type"] == "element" then
+        return { seq[".__local_name"] }, nil
+    end
+
+    return { "" }, nil
+end
+
+local function fnMax(ctx, seq)
+    local firstarg = seq[1]
+    local x
+    for _, itm in ipairs(firstarg) do
+        if not x then
+            x = number_value({ itm })
+        else
+            local y = number_value({ itm })
+            if y > x then x = y end
+        end
+    end
+    return { x }, nil
+end
+
+local function fnMin(ctx, seq)
+    local firstarg = seq[1]
+    local x
+    for _, itm in ipairs(firstarg) do
+        if not x then
+            x = number_value({ itm })
+        else
+            local y = number_value({ itm })
+            if y < x then x = y end
+        end
+    end
+    return { x }, nil
+end
+
+local function fnNormalizeSpace(ctx, seq)
+    local firstarg = seq[1]
+    local x = string_value(firstarg)
+    x = x:gsub("^%s+", "")
+    x = x:gsub("%s+$", "")
+    x = x:gsub("%s+", " ")
+    return { x }, nil
+end
+
+local function fnNot(ctx, seq)
+    local firstarg = seq[1]
+    local x, err = boolean_value(firstarg)
+    if err then
+        return {}, err
+    end
+    return { not x }, nil
+end
 
 local function fnNumber(ctx, seq)
     local x = number_value(seq[1])
@@ -468,9 +543,48 @@ local function fnNumber(ctx, seq)
     return { x }, nil
 end
 
+local function fnRound(ctx, seq)
+    local firstarg = seq[1]
+    if #firstarg == 0 then
+        return {}, nil
+    end
+    local n, err = number_value(firstarg)
+    if err then
+        return nil, err
+    end
+    return { math.floor(n + 0.5) }, nil
+end
+
 local function fnString(ctx, seq)
-    local x = string_value(seq[1])
+    local input_seq = ctx.sequence
+    if #seq == 1 then
+        input_seq = seq[1]
+    end
+    -- first item
+    seq = input_seq
+    local x = string_value(seq)
     return { x }, nil
+end
+
+local function fnStringJoin(ctx, seq)
+    local firstarg = seq[1]
+    local secondarg = seq[2]
+    if #secondarg ~= 1 then
+        return nil, "string-join: second argument should be a string"
+    end
+    local tab = {}
+
+    for _, itm in ipairs(firstarg) do
+        local str = string_value(itm)
+        tab[#tab + 1] = str
+    end
+    return { table.concat(tab, string_value(secondarg[1])) }, nil
+end
+
+local function fnStringLength(ctx, seq)
+    local firstarg = seq[1]
+    local x = string_value(firstarg)
+    return { utf8.len(x) }, nil
 end
 
 local function fnTrue(ctx, seq)
@@ -479,12 +593,20 @@ end
 
 local funcs = {
     -- function name, namespace, function, minarg, maxarg
-    { "concat", M.fnNS, fnConcat, 0, -1 },
-    { "count",  M.fnNS, fnCount,  1, 1 },
-    { "false",  M.fnNS, fnFalse,  0, 0 },
-    { "number", M.fnNS, fnNumber, 1, 1 },
-    { "string", M.fnNS, fnString, 1, 1 },
-    { "true",   M.fnNS, fnTrue,   0, 0 },
+    { "concat",          M.fnNS, fnConcat,         0, -1 },
+    { "count",           M.fnNS, fnCount,          1, 1 },
+    { "false",           M.fnNS, fnFalse,          0, 0 },
+    { "local-name",      M.fnNS, fnLocalName,      0, 1 },
+    { "number",          M.fnNS, fnNumber,         1, 1 },
+    { "normalize-space", M.fnNS, fnNormalizeSpace, 1, 1 },
+    { "not",             M.fnNS, fnNot,            1, 1 },
+    { "max",             M.fnNS, fnMax,            1, 1 },
+    { "min",             M.fnNS, fnMin,            1, 1 },
+    { "round",           M.fnNS, fnRound,          1, 1 },
+    { "string",          M.fnNS, fnString,         1, 1 },
+    { "string-length",   M.fnNS, fnStringLength,   1, 1 },
+    { "string-join",     M.fnNS, fnStringJoin,     2, 2 },
+    { "true",            M.fnNS, fnTrue,           0, 0 },
 }
 
 local function registerFunction(func)
@@ -1156,10 +1278,9 @@ function parse_relative_path_expr(tl)
         end
     end
     if #efs == 1 then
-        leaveStep(tl, "26 parse_relative_path_expr")
+        leaveStep(tl, "26 parse_relative_path_expr #efs1")
         return efs[1], nil
     end
-
     local evaler = function(ctx)
         local retseq
         for i = 1, #efs do
@@ -1167,7 +1288,7 @@ function parse_relative_path_expr(tl)
             local copysequence = ctx.sequence
             local ef = efs[i]
             for _, itm in ipairs(copysequence) do
-                context.sequence = { itm }
+                ctx.sequence = { itm }
                 local seq, err = ef(ctx)
                 if err then
                     return nil, err
@@ -1180,7 +1301,7 @@ function parse_relative_path_expr(tl)
         end
         return retseq, nil
     end
-    leaveStep(tl, "26 parse_relative_path_expr")
+    leaveStep(tl, "26 parse_relative_path_expr (last)")
     return evaler, nil
 end
 
@@ -1243,13 +1364,17 @@ function parse_forward_step(tl)
         leaveStep(tl, "29 parse_forward_step")
         return nil, err
     end
+    if not tf then
+        leaveStep(tl, "29 parse_forward_step (nil)")
+        return nil, nil
+    end
     local evaler = function(ctx)
         if stepAxis == "axisChild" then
             ctx:childaxis()
         else
             assert(false, "nyi")
         end
-        if not tf then return nil, "test func is nil" end
+        if not tf then return nil, nil end
         local ret = {}
         for _, itm in ipairs(ctx.sequence) do
             if tf(itm) then
@@ -1484,6 +1609,7 @@ function parse_function_call(tl)
             local x, y = callFunction(function_name_token[1], {}, ctx)
             return x, y
         end
+        leaveStep(tl, "48 parse_function_call")
         return evaler, nil
     end
 

@@ -1,0 +1,7 @@
+.vscode/
+createxmltable.lua
+debug.lua
+inspect.lua
+main.go
+main.lua
+serpent.lua
