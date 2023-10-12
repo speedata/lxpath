@@ -51,6 +51,41 @@ local seq, errmsg = ef(ctx)
 lua lxpath_test.lua
 ```
 
+## Unicode and UTF8
+
+All input is expected to be in UTF8.
+
+This library is not unicode aware! This means for example `upper-case('ä')` is not `Ä`, but `ä`, since there is no lookup table for unicode.
+
+
+## Limitations
+
+* This library is not unicode aware (see above).
+* Since Lua does not have “real” regular expressions, the functions that expect regular expressions behave in a strange way.
+
+You can always override the XPath functions.
+
+## Registering new XPath functions
+
+You can use the `registerFunction()` function to add your own definitions:
+
+It expects a table with the following fields:
+
+1. function name
+2. namespace
+3. function
+4. minimum number of arguments
+5. maximum number of arguments (-1 if arbitrary many arguments allowed)
+
+example:
+
+```lua
+function fnSubstring(ctx, arg)
+    ...
+end
+registerFunction( { "substring", "http://www.w3.org/2005/xpath-functions", fnSubstring,2, 3 } )
+```
+
 ## XML representation
 
 Since the xpath library is not parsing the XML file, it has to be represented in a tree like data structure.

@@ -157,6 +157,7 @@ function tokenlist:new(o)
     setmetatable(o, self)
     self.__index = self
     self.pos = 1
+    self.attributeMode = false
     return o
 end
 
@@ -339,6 +340,9 @@ end
 
 --------------------------
 local function number_value(sequence)
+    if type(sequence) == "number" then
+        return sequence
+    end
     if not sequence then
         return nil, "empty sequence"
     end
@@ -374,9 +378,10 @@ local function string_value(seq)
             ret[#ret + 1] = 'NaN'
         elseif type(itm) == "table" and itm[".__type"] == "element" then
             for _, cld in ipairs(itm) do
-                local x = string_value(cld)
-                ret[#ret + 1] = x
+                ret[#ret + 1] = string_value(cld)
             end
+        elseif type(itm) == "table" and itm[".__type"] == "attribute" then
+            ret[#ret+1] = itm.value
         else
             ret[#ret + 1] = tostring(itm)
         end
@@ -451,12 +456,54 @@ local function docompare(op, lhs, rhs)
     return evaler, nil
 end
 
+local function fnAbs(cts,seq)
+    local firstarg = seq[1]
+    local n, err = number_value(firstarg)
+    if not n or err then return nil, err end
+    return { math.abs(n)},nil
+end
+
+local function fnBoolean(cts,seq)
+    local firstarg = seq[1]
+    local tf, err = boolean_value(firstarg)
+    if tf == nil or err then return nil, err end
+    return { tf },nil
+end
+
+local function fnCeiling(cts,seq)
+    local n, err = number_value(seq[1])
+    if err then return err end
+    if n == nil then return {nan},nil end
+    return { math.ceil(n) },nil
+end
+
 local function fnConcat(ctx, seq)
     local ret = {}
     for _, itm in ipairs(seq) do
         ret[#ret + 1] = string_value(itm)
     end
     return { table.concat(ret) }
+end
+
+local function fnCodepointsToString(ctx,seq)
+    local firstarg = seq[1]
+    local ret = {}
+    for _, itm in ipairs(firstarg) do
+        local n,err = number_value(itm)
+        if err then
+            return nil, err
+        end
+        ret[#ret+1] = utf8.char(n)
+    end
+
+    return {table.concat(ret)}, nil
+end
+
+local function fnContains(ctx, seq)
+    local firstarg = string_value(seq[1])
+    local secondarg = string_value(seq[2])
+    local x = string.find(firstarg, secondarg, 1, true)
+    return { x ~= nil }, nil
 end
 
 local function fnCount(ctx, seq)
@@ -466,6 +513,13 @@ end
 
 local function fnFalse(ctx, seq)
     return { false }, nil
+end
+
+local function fnFloor(cts,seq)
+    local n, err = number_value(seq[1])
+    if err then return err end
+    if n == nil then return {nan},nil end
+    return { math.floor(n) },nil
 end
 
 local function fnLocalName(ctx, seq)
@@ -490,6 +544,14 @@ local function fnLocalName(ctx, seq)
 
     return { "" }, nil
 end
+
+-- Not unicode aware!
+local function fnLowerCase(ctx, seq)
+    local firstarg = seq[1]
+    local x = string_value(firstarg)
+    return { string.lower(x) }, nil
+end
+
 
 local function fnMax(ctx, seq)
     local firstarg = seq[1]
@@ -543,6 +605,15 @@ local function fnNumber(ctx, seq)
     return { x }, nil
 end
 
+local function fnReverse(ctx, seq)
+    local firstarg = seq[1]
+    local ret = {}
+    for i = #firstarg, 1, -1 do
+        ret[#ret + 1] = firstarg[i]
+    end
+    return ret, nil
+end
+
 local function fnRound(ctx, seq)
     local firstarg = seq[1]
     if #firstarg == 0 then
@@ -587,26 +658,75 @@ local function fnStringLength(ctx, seq)
     return { utf8.len(x) }, nil
 end
 
+local function fnStringToCodepoints(ctx,seq)
+    local str = string_value(seq[1])
+    local ret = {}
+    for _, c in utf8.codes(str) do
+        ret[#ret+1] = c
+    end
+    return ret, nil
+end
+
+local function fnSubstring(ctx, seq)
+    local str = string_value(seq[1])
+    local pos, err = number_value(seq[2])
+    if err then
+        return nil, err
+    end
+    local len = #str
+    if #seq > 2 then
+        len = number_value(seq[3])
+    end
+    local ret = {}
+    local l = 0
+    for i, c in utf8.codes(str) do
+        if i >= pos and l < len then
+            ret[#ret + 1] = utf8.char(c)
+            l = l + 1
+        end
+    end
+
+    return { table.concat(ret) }, nil
+end
+
 local function fnTrue(ctx, seq)
     return { true }, nil
 end
 
+-- Not unicode aware!
+local function fnUpperCase(ctx, seq)
+    local firstarg = seq[1]
+    local x = string_value(firstarg)
+    return { string.upper(x) }, nil
+end
+
 local funcs = {
     -- function name, namespace, function, minarg, maxarg
-    { "concat",          M.fnNS, fnConcat,         0, -1 },
-    { "count",           M.fnNS, fnCount,          1, 1 },
-    { "false",           M.fnNS, fnFalse,          0, 0 },
-    { "local-name",      M.fnNS, fnLocalName,      0, 1 },
-    { "number",          M.fnNS, fnNumber,         1, 1 },
-    { "normalize-space", M.fnNS, fnNormalizeSpace, 1, 1 },
-    { "not",             M.fnNS, fnNot,            1, 1 },
-    { "max",             M.fnNS, fnMax,            1, 1 },
-    { "min",             M.fnNS, fnMin,            1, 1 },
-    { "round",           M.fnNS, fnRound,          1, 1 },
-    { "string",          M.fnNS, fnString,         1, 1 },
-    { "string-length",   M.fnNS, fnStringLength,   1, 1 },
-    { "string-join",     M.fnNS, fnStringJoin,     2, 2 },
-    { "true",            M.fnNS, fnTrue,           0, 0 },
+    { "abs",                  M.fnNS, fnAbs,                1, 1 },
+    { "boolean",              M.fnNS, fnBoolean,            1, 1 },
+    { "ceiling",              M.fnNS, fnCeiling,            1, 1 },
+    { "codepoints-to-string", M.fnNS, fnCodepointsToString, 1, 1 },
+    { "concat",               M.fnNS, fnConcat,             0, -1 },
+    { "contains",             M.fnNS, fnContains,           2, 2 },
+    { "count",                M.fnNS, fnCount,              1, 1 },
+    { "false",                M.fnNS, fnFalse,              0, 0 },
+    { "floor",                M.fnNS, fnFloor,              1, 1 },
+    { "local-name",           M.fnNS, fnLocalName,          0, 1 },
+    { "lower-case",           M.fnNS, fnLowerCase,          1, 1 },
+    { "max",                  M.fnNS, fnMax,                1, 1 },
+    { "min",                  M.fnNS, fnMin,                1, 1 },
+    { "normalize-space",      M.fnNS, fnNormalizeSpace,     1, 1 },
+    { "not",                  M.fnNS, fnNot,                1, 1 },
+    { "number",               M.fnNS, fnNumber,             1, 1 },
+    { "reverse",              M.fnNS, fnReverse,            1, 1 },
+    { "round",                M.fnNS, fnRound,              1, 1 },
+    { "string-join",          M.fnNS, fnStringJoin,         2, 2 },
+    { "string-length",        M.fnNS, fnStringLength,       1, 1 },
+    { "string-to-codepoints", M.fnNS, fnStringToCodepoints, 1, 1 },
+    { "string",               M.fnNS, fnString,             1, 1 },
+    { "substring",            M.fnNS, fnSubstring,          2, 3 },
+    { "true",                 M.fnNS, fnTrue,               0, 0 },
+    { "upper-case",           M.fnNS, fnUpperCase,          1, 1 },
 }
 
 local function registerFunction(func)
@@ -616,6 +736,8 @@ end
 for _, func in ipairs(funcs) do
     registerFunction(func)
 end
+
+M.registerFunction = registerFunction
 
 local function getFunction(namespace, fname)
     return M.funcs[namespace .. " " .. fname]
@@ -635,19 +757,6 @@ local function callFunction(fname, seq, ctx)
     if func then
         return func[3](ctx, seq)
     end
-
-    -- parts := strings.Split(name, ":")
-    -- var ns string
-    -- var ok bool
-    -- if len(parts) == 2 {
-    -- 	if ns, ok = ctx.Namespaces[parts[0]]; ok {
-    -- 		name = parts[1]
-    -- 	} else {
-    -- 		return nil, fmt.Errorf("Could not find namespace for prefix %q", parts[0])
-    -- 	}
-    -- } else {
-    -- 	ns = fnNS
-    -- }
 
     return {}, "Could not find function " .. fname .. " with name space " .. namespace
 end
@@ -716,6 +825,24 @@ function context:root()
         end
     end
     return nil, "no root element found"
+end
+
+function context:attributeaixs()
+    local seq = {}
+    for _, itm in ipairs(self.sequence) do
+        if type(itm) == "table" and itm[".__type"] == "element" then
+            for key, value in pairs(itm[".__attributes"]) do
+                local x = {
+                    name = key,
+                    value = value,
+                    [".__type"] = "attribute",
+                }
+                seq[#seq+1] = x
+            end
+        end
+    end
+    self.sequence = seq
+    return seq, nil
 end
 
 function context:childaxis()
@@ -1357,8 +1484,16 @@ function parse_forward_step(tl)
     enterStep(tl, "29 parse_forward_step")
     local err = nil
     local tf
+    local axisChild, axisAttribute = 1, 2
+    local stepAxis = axisChild
 
-    local stepAxis = "axisChild"
+    if tl:readNexttokIfIsOneOfValue({"@"}) then
+        tl.attributeMode = true
+        stepAxis = axisAttribute
+    else
+        tl.attributeMode = false
+    end
+
     tf, err = parse_node_test(tl)
     if err then
         leaveStep(tl, "29 parse_forward_step")
@@ -1369,10 +1504,10 @@ function parse_forward_step(tl)
         return nil, nil
     end
     local evaler = function(ctx)
-        if stepAxis == "axisChild" then
+        if stepAxis == axisChild then
             ctx:childaxis()
         else
-            assert(false, "nyi")
+            ctx:attributeaixs()
         end
         if not tf then return nil, nil end
         local ret = {}
@@ -1423,11 +1558,17 @@ function parse_name_test(tl)
         if not n then
             return nil, "qname should not be empty"
         end
-        tf = function(itm)
-            if type(itm) == "table" and itm[".__type"] == "element" then
-                return itm[".__name"] == n[1]
+        if tl.attributeMode then
+            tf = function (itm)
+                return itm.name == n[1]
             end
-            return false
+        else
+            tf = function(itm)
+                if type(itm) == "table" and itm[".__type"] == "element" then
+                    return itm[".__name"] == n[1]
+                end
+                return false
+            end
         end
     end
     leaveStep(tl, "36 parse_name_test")
