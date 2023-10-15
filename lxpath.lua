@@ -189,6 +189,19 @@ function tokenlist:unread()
     return nil
 end
 
+---@return string?
+function tokenlist:skipNCName(name)
+    local tok, err = self:read()
+    if err then
+        return err
+    end
+    if tok[2] ~= "tokQName" then
+        return "QName expected, got " .. tok[2]
+    end
+    if tok[1] == name then return nil end
+    return ""
+end
+
 ---@param tokvalues table
 ---@return token?
 ---@return string?
@@ -339,7 +352,18 @@ function M.string_to_tokenlist(str)
 end
 
 --------------------------
+local function is_element(itm)
+end
+
+local function is_attribute(itm)
+    return type(itm) == "table" and itm[".__type"] == "attribute"
+end
+
 local function number_value(sequence)
+    if is_attribute(sequence) then
+        return tonumber(sequence.value)
+    end
+
     if type(sequence) == "number" then
         return sequence
     end
@@ -381,7 +405,7 @@ local function string_value(seq)
                 ret[#ret + 1] = string_value(cld)
             end
         elseif type(itm) == "table" and itm[".__type"] == "attribute" then
-            ret[#ret+1] = itm.value
+            ret[#ret + 1] = itm.value
         else
             ret[#ret + 1] = tostring(itm)
         end
@@ -428,11 +452,13 @@ end
 
 local function docomparefunc(op, leftitem, rightitem)
     if type(leftitem) == "number" or type(rightitem) == "number" then
-        local x, err = docomparenumber(op, tonumber(leftitem), tonumber(rightitem))
+        local x, err = docomparenumber(op, number_value(leftitem), number_value(rightitem))
         return x, err
     elseif type(leftitem) == "string" or type(rightitem) == "string" then
-        local x, err = docomparestring(op, tostring(leftitem), tostring(rightitem))
+        local x, err = docomparestring(op, string_value({ leftitem }), string_value({ rightitem }))
         return x, err
+    else
+        assert(false, "nyi")
     end
 end
 
@@ -456,25 +482,25 @@ local function docompare(op, lhs, rhs)
     return evaler, nil
 end
 
-local function fnAbs(cts,seq)
+local function fnAbs(cts, seq)
     local firstarg = seq[1]
     local n, err = number_value(firstarg)
     if not n or err then return nil, err end
-    return { math.abs(n)},nil
+    return { math.abs(n) }, nil
 end
 
-local function fnBoolean(cts,seq)
+local function fnBoolean(cts, seq)
     local firstarg = seq[1]
     local tf, err = boolean_value(firstarg)
     if tf == nil or err then return nil, err end
-    return { tf },nil
+    return { tf }, nil
 end
 
-local function fnCeiling(cts,seq)
+local function fnCeiling(cts, seq)
     local n, err = number_value(seq[1])
     if err then return err end
-    if n == nil then return {nan},nil end
-    return { math.ceil(n) },nil
+    if n == nil then return { nan }, nil end
+    return { math.ceil(n) }, nil
 end
 
 local function fnConcat(ctx, seq)
@@ -485,18 +511,18 @@ local function fnConcat(ctx, seq)
     return { table.concat(ret) }
 end
 
-local function fnCodepointsToString(ctx,seq)
+local function fnCodepointsToString(ctx, seq)
     local firstarg = seq[1]
     local ret = {}
     for _, itm in ipairs(firstarg) do
-        local n,err = number_value(itm)
+        local n, err = number_value(itm)
         if err then
             return nil, err
         end
-        ret[#ret+1] = utf8.char(n)
+        ret[#ret + 1] = utf8.char(n)
     end
 
-    return {table.concat(ret)}, nil
+    return { table.concat(ret) }, nil
 end
 
 local function fnContains(ctx, seq)
@@ -508,18 +534,27 @@ end
 
 local function fnCount(ctx, seq)
     local firstarg = seq[1]
+    if not firstarg then return { 0 }, nil end
     return { #firstarg }, nil
+end
+
+local function fnEmpty(ctx, seq)
+    return { #seq[1] == 0 }, nil
 end
 
 local function fnFalse(ctx, seq)
     return { false }, nil
 end
 
-local function fnFloor(cts,seq)
+local function fnFloor(ctx, seq)
     local n, err = number_value(seq[1])
     if err then return err end
-    if n == nil then return {nan},nil end
-    return { math.floor(n) },nil
+    if n == nil then return { nan }, nil end
+    return { math.floor(n) }, nil
+end
+
+local function fnLast(ctx, seq)
+    return { ctx.size }, nil
 end
 
 local function fnLocalName(ctx, seq)
@@ -605,6 +640,11 @@ local function fnNumber(ctx, seq)
     return { x }, nil
 end
 
+local function fnPosition(ctx, seq)
+    return { ctx.pos }, nil
+end
+
+
 local function fnReverse(ctx, seq)
     local firstarg = seq[1]
     local ret = {}
@@ -653,16 +693,21 @@ local function fnStringJoin(ctx, seq)
 end
 
 local function fnStringLength(ctx, seq)
-    local firstarg = seq[1]
-    local x = string_value(firstarg)
+    local input_seq = ctx.sequence
+    if #seq == 1 then
+        input_seq = seq[1]
+    end
+    -- first item
+    seq = input_seq
+    local x = string_value(seq)
     return { utf8.len(x) }, nil
 end
 
-local function fnStringToCodepoints(ctx,seq)
+local function fnStringToCodepoints(ctx, seq)
     local str = string_value(seq[1])
     local ret = {}
     for _, c in utf8.codes(str) do
-        ret[#ret+1] = c
+        ret[#ret + 1] = c
     end
     return ret, nil
 end
@@ -709,8 +754,10 @@ local funcs = {
     { "concat",               M.fnNS, fnConcat,             0, -1 },
     { "contains",             M.fnNS, fnContains,           2, 2 },
     { "count",                M.fnNS, fnCount,              1, 1 },
+    { "empty",                M.fnNS, fnEmpty,              1, 1 },
     { "false",                M.fnNS, fnFalse,              0, 0 },
     { "floor",                M.fnNS, fnFloor,              1, 1 },
+    { "last",                 M.fnNS, fnLast,               0, 0 },
     { "local-name",           M.fnNS, fnLocalName,          0, 1 },
     { "lower-case",           M.fnNS, fnLowerCase,          1, 1 },
     { "max",                  M.fnNS, fnMax,                1, 1 },
@@ -718,6 +765,7 @@ local funcs = {
     { "normalize-space",      M.fnNS, fnNormalizeSpace,     1, 1 },
     { "not",                  M.fnNS, fnNot,                1, 1 },
     { "number",               M.fnNS, fnNumber,             1, 1 },
+    { "position",             M.fnNS, fnPosition,           0, 0 },
     { "reverse",              M.fnNS, fnReverse,            1, 1 },
     { "round",                M.fnNS, fnRound,              1, 1 },
     { "string-join",          M.fnNS, fnStringJoin,         2, 2 },
@@ -764,34 +812,52 @@ end
 
 local function filter(ctx, f)
     local res = {}
-    local predicate, err = f(ctx)
-    if err then
-        return nil, err
-    end
-
-    if #predicate == 1 then
-        local idx = tonumber(predicate[1])
-        if idx then
-            if #ctx.sequence >= idx then
-                return { ctx.sequence[idx] }, nil
-            else
-                return {}, nil
-            end
+    local copysequence = ctx.sequence
+    local positions
+    local lengths
+    if ctx.positions then
+        positions = ctx.positions
+        lengths = ctx.lengths
+    else
+        positions = {}
+        lengths = {}
+        for i = 1, #ctx.sequence do
+            positions[#positions + 1] = i
+            lengths[#lengths + 1] = 1
         end
     end
 
-    local copysequence = ctx.sequence
-    for _, itm in ipairs(copysequence) do
+    for i, itm in ipairs(copysequence) do
         ctx.sequence = { itm }
-        ctx.pos = 1
+        ctx.pos = positions[i]
+        if #lengths > i then
+            ctx.size = lengths[i]
+        else
+            ctx.size = 1
+        end
         predicate, err = f(ctx)
         if err then
             return nil, err
         end
+        if #predicate == 1 then
+            local idx = tonumber(predicate[1])
+            if idx then
+                if idx > #copysequence then
+                    ctx.sequence = {}
+                    return {}, nil
+                end
+                if idx == i then
+                    ctx.sequence = { itm }
+                    return { itm }, nil
+                end
+            end
+        end
+
         if boolean_value(predicate) then
             res[#res + 1] = itm
         end
     end
+    ctx.size = #res
     ctx.sequence = res
     return res, nil
 end
@@ -837,7 +903,7 @@ function context:attributeaixs()
                     value = value,
                     [".__type"] = "attribute",
                 }
-                seq[#seq+1] = x
+                seq[#seq + 1] = x
             end
         end
     end
@@ -955,13 +1021,146 @@ end
 ---@return string? error
 function parse_expr_single(tl)
     enterStep(tl, "3 parse_expr_single")
-    local efs = {}
+    local tok, err = tl:readNexttokIfIsOneOfValue({ "for", "some", "if" })
+    if err then
+        leaveStep(tl, "3 parse_expr_single")
+        return nil, err
+    end
+    if tok then
+        local ef
+        if tok[1] == "for" then
+            ef, err = parse_for_expr(tl)
+        elseif tok[1] == "some" then
+            w("some")
+        elseif tok[1] == "if" then
+            ef, err = parse_if_expr(tl)
+        else
+            return nil, "nil"
+        end
+        return ef, err
+    end
     local ef, err = parse_or_expr(tl)
     if err ~= nil then
         leaveStep(tl, "3 parse_expr_single")
         return nil, err
     end
     leaveStep(tl, "3 parse_expr_single")
+    return ef, nil
+end
+
+-- [4] ForExpr ::= SimpleForClause "return" ExprSingle
+-- [5] SimpleForClause ::= "for" "$" VarName "in" ExprSingle ("," "$" VarName "in" ExprSingle)*
+function parse_for_expr(tl)
+    enterStep(tl, "4 parse_for_expr")
+
+    local vartoken, err = tl:read()
+    if err then
+        leaveStep(tl, "4 parse_for_expr")
+        return nil, err
+    end
+    if vartoken[2] ~= "tokVarname" then
+        leaveStep(tl, "4 parse_for_expr")
+        return nil, "variable name expected"
+    end
+
+    local varname = vartoken[1]
+    err = tl:skipNCName("in")
+    if err then
+        leaveStep(tl, "4 parse_for_expr")
+        return nil, err
+    end
+
+    local sfc
+    sfc, err = parse_expr_single(tl)
+
+    err = tl:skipNCName("return")
+    if err then
+        leaveStep(tl, "4 parse_for_expr")
+        return nil, err
+    end
+    local ef
+    ef, err = parse_expr_single(tl)
+    if err then
+        leaveStep(tl, "4 parse_for_expr")
+        return err
+    end
+
+    local evaler = function(ctx)
+        local ret = {}
+        local seqfc, err
+        seqfc, err = sfc(ctx)
+        if err then return err end
+        for _, itm in ipairs(seqfc) do
+            ctx.vars[varname] = { itm }
+            ctx.context = { itm }
+            local seq
+            seq, err = ef(ctx)
+            if err then return nil, err end
+            for i = 1, #seq do
+                ret[#ret + 1] = seq[i]
+            end
+        end
+        return ret, nil
+    end
+    leaveStep(tl, "4 parse_for_expr")
+    return evaler, nil
+end
+
+-- [7] IfExpr ::= "if" "(" Expr ")" "then" ExprSingle "else" ExprSingle
+function parse_if_expr(tl)
+    enterStep(tl, "7 parse_if_expr")
+    -- var nexttok *token
+    -- var err error
+    -- var boolEval, thenpart, elsepart EvalFunc
+    local nexttok, err
+    nexttok, err = tl:read()
+    if err then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, err
+    end
+    if nexttok[2] ~= "tokOpenParen" then
+        return nil, string.format("open parenthesis expected, found %s", tostring(nexttok[1]))
+    end
+    local boolEval, thenpart, elsepart
+    boolEval, err = parse_expr(tl)
+    if err then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, err
+    end
+    ok = tl:skipType("tokCloseParen")
+    if not ok then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, ") expected"
+    end
+    err = tl:skipNCName("then")
+    if err then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, err
+    end
+    thenpart, err = parse_expr_single(tl)
+    if err then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, err
+    end
+
+    tl:skipNCName("else")
+    elsepart, err = parse_expr_single(tl)
+    if err then
+        leaveStep(tl, "7 parse_if_expr")
+        return nil, err
+    end
+    ef = function(ctx)
+        local res, bv, err
+        res, err = boolEval(ctx)
+        if err then return nil, err end
+        bv, err = boolean_value(res)
+        if err then return nil, err end
+        if bv then
+            return thenpart(ctx)
+        end
+        return elsepart(ctx)
+    end
+    leaveStep(tl, "7 parse_if_expr")
     return ef, nil
 end
 
@@ -1414,8 +1613,10 @@ function parse_relative_path_expr(tl)
             retseq = {}
             local copysequence = ctx.sequence
             local ef = efs[i]
-            for _, itm in ipairs(copysequence) do
+            ctx.size = #copysequence
+            for i, itm in ipairs(copysequence) do
                 ctx.sequence = { itm }
+                ctx.pos = i
                 local seq, err = ef(ctx)
                 if err then
                     return nil, err
@@ -1470,6 +1671,40 @@ function parse_axis_step(tl)
         leaveStep(tl, "28 parse_axis_step")
         return nil, err
     end
+    local predicates = {}
+
+    while true do
+        if not tl:nextTokIsType("tokOpenBracket") then
+            break
+        end
+        local predicate
+        tl:read()
+        predicate, err = parse_expr(tl)
+        if err then
+            leaveStep(tl, "28 parse_axis_step (err)")
+            return nil, err
+        end
+        predicates[#predicates + 1] = predicate
+        tl:skipType("tokCloseBracket")
+    end
+
+    if #predicates > 0 then
+        local ff = function(ctx)
+            local seq, err = ef(ctx)
+            if err then
+                return nil, err
+            end
+            ctx.sequence = seq
+            for _, predicate in ipairs(predicates) do
+                local _, err = filter(ctx, predicate)
+                if err then return nil, err end
+            end
+            ctx.size = #ctx.sequence
+            return ctx.sequence, nil
+        end
+        leaveStep(tl, "28 parse_axis_step (ff)")
+        return ff
+    end
     leaveStep(tl, "28 parse_axis_step")
     return ef, nil
 end
@@ -1487,7 +1722,7 @@ function parse_forward_step(tl)
     local axisChild, axisAttribute = 1, 2
     local stepAxis = axisChild
 
-    if tl:readNexttokIfIsOneOfValue({"@"}) then
+    if tl:readNexttokIfIsOneOfValue({ "@" }) then
         tl.attributeMode = true
         stepAxis = axisAttribute
     else
@@ -1511,10 +1746,18 @@ function parse_forward_step(tl)
         end
         if not tf then return nil, nil end
         local ret = {}
+        ctx.positions = {}
+        ctx.lengths = {}
+        local c = 1
         for _, itm in ipairs(ctx.sequence) do
             if tf(itm) then
+                ctx.positions[#ctx.positions + 1] = c
+                c = c + 1
                 ret[#ret + 1] = itm
             end
+        end
+        for i = 1, #ret do
+            ctx.lengths[#ctx.lengths + 1] = #ret
         end
         return ret, nil
     end
@@ -1548,9 +1791,10 @@ end
 ---@return string? error
 function parse_name_test(tl)
     enterStep(tl, "36 parse_name_test")
-    local tf
+    local tf, err
     if tl:nextTokIsType("tokQName") then
-        local n, err = tl:read()
+        local n
+        n, err = tl:read()
         if err then
             leaveStep(tl, "36 parse_name_test")
             return nil, err
@@ -1559,7 +1803,7 @@ function parse_name_test(tl)
             return nil, "qname should not be empty"
         end
         if tl.attributeMode then
-            tf = function (itm)
+            tf = function(itm)
                 return itm.name == n[1]
             end
         else
@@ -1570,9 +1814,43 @@ function parse_name_test(tl)
                 return false
             end
         end
+        leaveStep(tl, "36 parse_name_test")
+        return tf, nil
     end
+    tf, err = parse_wild_card(tl)
     leaveStep(tl, "36 parse_name_test")
     return tf, nil
+end
+
+-- [37] Wildcard ::= "*" | (NCName ":" "*") | ("*" ":" NCName)
+function parse_wild_card(tl)
+    enterStep(tl, "37 parse_wild_card")
+    local nexttok, err = tl:read()
+    if err ~= nil then
+        leaveStep(tl, "37 parse_wild_card")
+        return nil, err
+    end
+    local str = nexttok[1]
+    if str == "*" or str:match("^%*:") or str:match(":%*$") then
+        if tl.attributeMode then
+            tf = function(itm)
+                if type(itm) == "table" and itm[".__type"] == "attribute" then
+                    return true
+                end
+            end
+        else
+            tf = function(itm)
+                if type(itm) == "table" and itm[".__type"] == "element" then
+                    return true
+                end
+            end
+        end
+        leaveStep(tl, "37 parse_wild_card")
+        return tf, nil
+    else
+        tl:unread()
+    end
+    leaveStep(tl, "37 parse_wild_card")
 end
 
 -- [38] FilterExpr ::= PrimaryExpr PredicateList
@@ -1661,6 +1939,8 @@ function parse_primary_expr(tl)
     -- VarRef
     if nexttok[2] == "tokVarname" then
         local evaler = function(ctx)
+            local value = ctx.vars[nexttok[1]]
+            if type(value) == "table" then return value, nil end
             return { ctx.vars[nexttok[1]] }, nil
         end
         leaveStep(tl, "41 parse_primary_expr (vr)")
@@ -1747,8 +2027,7 @@ function parse_function_call(tl)
     if tl:nextTokIsType("tokCloseParen") then
         tl:read()
         local evaler = function(ctx)
-            local x, y = callFunction(function_name_token[1], {}, ctx)
-            return x, y
+            return callFunction(function_name_token[1], {}, ctx)
         end
         leaveStep(tl, "48 parse_function_call")
         return evaler, nil

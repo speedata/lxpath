@@ -42,7 +42,7 @@ end
 
 local seq, errmsg = ef(ctx)
 -- seq is the resulting sequence (a table) of zero or more items.
--- Each item can be a sequence, a string or a number.
+-- Each item can be a sequence, an element, an attribute, a string or a number.
 ```
 
 ## Running the tests
