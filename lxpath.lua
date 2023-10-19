@@ -191,9 +191,9 @@ end
 
 ---@return string?
 function tokenlist:skipNCName(name)
-    local tok, err = self:read()
-    if err then
-        return err
+    local tok, errmsg = self:read()
+    if errmsg then
+        return errmsg
     end
     if tok[2] ~= "tokQName" then
         return "QName expected, got " .. tok[2]
@@ -353,6 +353,7 @@ end
 
 --------------------------
 local function is_element(itm)
+    return type(itm) == "table" and itm[".__type"] == "element"
 end
 
 local function is_attribute(itm)
@@ -397,14 +398,15 @@ end
 local function string_value(seq)
     local ret = {}
     if type(seq) == "string" then return seq end
+    if is_attribute(seq) then return seq.value end
     for _, itm in ipairs(seq) do
         if tonumber(itm) and itm ~= itm then
             ret[#ret + 1] = 'NaN'
-        elseif type(itm) == "table" and itm[".__type"] == "element" then
+        elseif is_element(itm) then
             for _, cld in ipairs(itm) do
                 ret[#ret + 1] = string_value(cld)
             end
-        elseif type(itm) == "table" and itm[".__type"] == "attribute" then
+        elseif is_attribute(itm) then
             ret[#ret + 1] = itm.value
         else
             ret[#ret + 1] = tostring(itm)
@@ -412,6 +414,11 @@ local function string_value(seq)
     end
     return table.concat(ret)
 end
+
+M.string_value = string_value
+M.boolean_value = boolean_value
+M.number_value = number_value
+
 
 local function docomparestring(op, left, right)
     if op == "=" then
@@ -452,11 +459,11 @@ end
 
 local function docomparefunc(op, leftitem, rightitem)
     if type(leftitem) == "number" or type(rightitem) == "number" then
-        local x, err = docomparenumber(op, number_value(leftitem), number_value(rightitem))
-        return x, err
+        local x, errmsg = docomparenumber(op, number_value(leftitem), number_value(rightitem))
+        return x, errmsg
     elseif type(leftitem) == "string" or type(rightitem) == "string" then
-        local x, err = docomparestring(op, string_value({ leftitem }), string_value({ rightitem }))
-        return x, err
+        local x, errmsg = docomparestring(op, string_value({ leftitem }), string_value({ rightitem }))
+        return x, errmsg
     else
         assert(false, "nyi")
     end
@@ -464,15 +471,15 @@ end
 
 local function docompare(op, lhs, rhs)
     local evaler = function(ctx)
-        local left, right, err, ok
-        left, err = lhs(ctx)
-        if err ~= nil then return nil, err end
-        right, err = rhs(ctx)
-        if err ~= nil then return nil, err end
+        local left, right, errmsg, ok
+        left, errmsg = lhs(ctx)
+        if errmsg ~= nil then return nil, errmsg end
+        right, errmsg = rhs(ctx)
+        if errmsg ~= nil then return nil, errmsg end
         for _, leftitem in ipairs(left) do
             for _, rightitem in ipairs(right) do
-                ok, err = docomparefunc(op, leftitem, rightitem)
-                if err ~= nil then return nil, err end
+                ok, errmsg = docomparefunc(op, leftitem, rightitem)
+                if errmsg ~= nil then return nil, errmsg end
                 if ok then return { true }, nil end
             end
         end
@@ -484,21 +491,21 @@ end
 
 local function fnAbs(cts, seq)
     local firstarg = seq[1]
-    local n, err = number_value(firstarg)
-    if not n or err then return nil, err end
+    local n, errmsg = number_value(firstarg)
+    if not n or errmsg then return nil, errmsg end
     return { math.abs(n) }, nil
 end
 
 local function fnBoolean(cts, seq)
     local firstarg = seq[1]
-    local tf, err = boolean_value(firstarg)
-    if tf == nil or err then return nil, err end
+    local tf, errmsg = boolean_value(firstarg)
+    if tf == nil or errmsg then return nil, errmsg end
     return { tf }, nil
 end
 
 local function fnCeiling(cts, seq)
-    local n, err = number_value(seq[1])
-    if err then return err end
+    local n, errmsg = number_value(seq[1])
+    if errmsg then return errmsg end
     if n == nil then return { nan }, nil end
     return { math.ceil(n) }, nil
 end
@@ -515,9 +522,9 @@ local function fnCodepointsToString(ctx, seq)
     local firstarg = seq[1]
     local ret = {}
     for _, itm in ipairs(firstarg) do
-        local n, err = number_value(itm)
-        if err then
-            return nil, err
+        local n, errmsg = number_value(itm)
+        if errmsg then
+            return nil, errmsg
         end
         ret[#ret + 1] = utf8.char(n)
     end
@@ -547,8 +554,8 @@ local function fnFalse(ctx, seq)
 end
 
 local function fnFloor(ctx, seq)
-    local n, err = number_value(seq[1])
-    if err then return err end
+    local n, errmsg = number_value(seq[1])
+    if errmsg then return errmsg end
     if n == nil then return { nan }, nil end
     return { math.floor(n) }, nil
 end
@@ -573,7 +580,7 @@ local function fnLocalName(ctx, seq)
     -- first element
     seq = seq[1]
 
-    if type(seq) == "table" and seq[".__type"] == "element" then
+    if is_element(seq) then
         return { seq[".__local_name"] }, nil
     end
 
@@ -602,6 +609,15 @@ local function fnMax(ctx, seq)
     return { x }, nil
 end
 
+local function fnMatches(ctx, seq)
+    local text = string_value(seq[1])
+    local re = string_value(seq[2])
+    if string.match(text, re) then
+        return { true }, nil
+    end
+    return { false }, nil
+end
+
 local function fnMin(ctx, seq)
     local firstarg = seq[1]
     local x
@@ -627,9 +643,9 @@ end
 
 local function fnNot(ctx, seq)
     local firstarg = seq[1]
-    local x, err = boolean_value(firstarg)
-    if err then
-        return {}, err
+    local x, errmsg = boolean_value(firstarg)
+    if errmsg then
+        return {}, errmsg
     end
     return { not x }, nil
 end
@@ -659,9 +675,9 @@ local function fnRound(ctx, seq)
     if #firstarg == 0 then
         return {}, nil
     end
-    local n, err = number_value(firstarg)
-    if err then
-        return nil, err
+    local n, errmsg = number_value(firstarg)
+    if errmsg then
+        return nil, errmsg
     end
     return { math.floor(n + 0.5) }, nil
 end
@@ -714,9 +730,9 @@ end
 
 local function fnSubstring(ctx, seq)
     local str = string_value(seq[1])
-    local pos, err = number_value(seq[2])
-    if err then
-        return nil, err
+    local pos, errmsg = number_value(seq[2])
+    if errmsg then
+        return nil, errmsg
     end
     local len = #str
     if #seq > 2 then
@@ -751,6 +767,7 @@ local funcs = {
     { "boolean",              M.fnNS, fnBoolean,            1, 1 },
     { "ceiling",              M.fnNS, fnCeiling,            1, 1 },
     { "codepoints-to-string", M.fnNS, fnCodepointsToString, 1, 1 },
+    -- { "compare",              M.fnNS, fnCompare,             2, 2 },
     { "concat",               M.fnNS, fnConcat,             0, -1 },
     { "contains",             M.fnNS, fnContains,           2, 2 },
     { "count",                M.fnNS, fnCount,              1, 1 },
@@ -761,6 +778,7 @@ local funcs = {
     { "local-name",           M.fnNS, fnLocalName,          0, 1 },
     { "lower-case",           M.fnNS, fnLowerCase,          1, 1 },
     { "max",                  M.fnNS, fnMax,                1, 1 },
+    { "matches",              M.fnNS, fnMatches,            2, 3 },
     { "min",                  M.fnNS, fnMin,                1, 1 },
     { "normalize-space",      M.fnNS, fnNormalizeSpace,     1, 1 },
     { "not",                  M.fnNS, fnNot,                1, 1 },
@@ -768,6 +786,10 @@ local funcs = {
     { "position",             M.fnNS, fnPosition,           0, 0 },
     { "reverse",              M.fnNS, fnReverse,            1, 1 },
     { "round",                M.fnNS, fnRound,              1, 1 },
+    -- { "starts-with",          M.fnNS, fnStartsWith,         2, 2 },
+    -- { "ends-with",          M.fnNS, fnEndsWith,         2, 2 },
+    -- { "substring-after",          M.fnNS, fnSubstringAfter,         2, 2 },
+    -- { "substring-before",          M.fnNS, fnSubstringBefore,         2, 2 },
     { "string-join",          M.fnNS, fnStringJoin,         2, 2 },
     { "string-length",        M.fnNS, fnStringLength,       1, 1 },
     { "string-to-codepoints", M.fnNS, fnStringToCodepoints, 1, 1 },
@@ -812,6 +834,7 @@ end
 
 local function filter(ctx, f)
     local res = {}
+    local errmsg, predicate
     local copysequence = ctx.sequence
     local positions
     local lengths
@@ -826,18 +849,17 @@ local function filter(ctx, f)
             lengths[#lengths + 1] = 1
         end
     end
-
     for i, itm in ipairs(copysequence) do
         ctx.sequence = { itm }
         ctx.pos = positions[i]
-        if #lengths > i then
+        if #lengths >= i then
             ctx.size = lengths[i]
         else
             ctx.size = 1
         end
-        predicate, err = f(ctx)
-        if err then
-            return nil, err
+        predicate, errmsg = f(ctx)
+        if errmsg then
+            return nil, errmsg
         end
         if #predicate == 1 then
             local idx = tonumber(predicate[1])
@@ -896,7 +918,7 @@ end
 function context:attributeaixs()
     local seq = {}
     for _, itm in ipairs(self.sequence) do
-        if type(itm) == "table" and itm[".__type"] == "element" then
+        if is_element(itm) then
             for key, value in pairs(itm[".__attributes"]) do
                 local x = {
                     name = key,
@@ -915,7 +937,7 @@ function context:childaxis()
     local seq = {}
     for _, elt in ipairs(self.sequence) do
         if type(elt) == "table" then
-            if elt[".__type"] and elt[".__type"] == "element" then
+            if is_element(elt) then
                 for _, cld in ipairs(elt) do
                     seq[#seq + 1] = cld
                 end
@@ -935,6 +957,7 @@ function context:childaxis()
     self.sequence = seq
     return seq, nil
 end
+
 
 M.context = context
 -------------------------
@@ -980,10 +1003,10 @@ function parse_expr(tl)
     enterStep(tl, "2 parseExpr")
     local efs = {}
     while true do
-        local ef, err = parse_expr_single(tl)
-        if err ~= nil then
+        local ef, errmsg = parse_expr_single(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "2 parseExpr")
-            return nil, err
+            return nil, errmsg
         end
         efs[#efs + 1] = ef
         if not tl:nextTokIsType("tokComma") then
@@ -998,10 +1021,11 @@ function parse_expr(tl)
     local evaler = function(ctx)
         local ret = {}
         local seq
+        local errmsg
         for _, ef in ipairs(efs) do
-            seq, err = ef(ctx)
-            if err then
-                return nil, err
+            seq, errmsg = ef(ctx)
+            if errmsg then
+                return nil, errmsg
             end
             for _, itm in ipairs(seq) do
                 ret[#ret + 1] = itm
@@ -1021,28 +1045,29 @@ end
 ---@return string? error
 function parse_expr_single(tl)
     enterStep(tl, "3 parse_expr_single")
-    local tok, err = tl:readNexttokIfIsOneOfValue({ "for", "some", "if" })
-    if err then
+    local tok, errmsg = tl:readNexttokIfIsOneOfValue({ "for", "some", "if" })
+    if errmsg then
         leaveStep(tl, "3 parse_expr_single")
-        return nil, err
+        return nil, errmsg
     end
     if tok then
         local ef
         if tok[1] == "for" then
-            ef, err = parse_for_expr(tl)
+            ef, errmsg = parse_for_expr(tl)
         elseif tok[1] == "some" then
-            w("some")
+            assert(false, "nyi")
         elseif tok[1] == "if" then
-            ef, err = parse_if_expr(tl)
+            ef, errmsg = parse_if_expr(tl)
         else
             return nil, "nil"
         end
-        return ef, err
+        return ef, errmsg
     end
-    local ef, err = parse_or_expr(tl)
-    if err ~= nil then
+    local ef
+    ef, errmsg = parse_or_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "3 parse_expr_single")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "3 parse_expr_single")
     return ef, nil
@@ -1053,10 +1078,10 @@ end
 function parse_for_expr(tl)
     enterStep(tl, "4 parse_for_expr")
 
-    local vartoken, err = tl:read()
-    if err then
+    local vartoken, errmsg = tl:read()
+    if errmsg then
         leaveStep(tl, "4 parse_for_expr")
-        return nil, err
+        return nil, errmsg
     end
     if vartoken[2] ~= "tokVarname" then
         leaveStep(tl, "4 parse_for_expr")
@@ -1064,38 +1089,38 @@ function parse_for_expr(tl)
     end
 
     local varname = vartoken[1]
-    err = tl:skipNCName("in")
-    if err then
+    errmsg = tl:skipNCName("in")
+    if errmsg then
         leaveStep(tl, "4 parse_for_expr")
-        return nil, err
+        return nil, errmsg
     end
 
     local sfc
-    sfc, err = parse_expr_single(tl)
+    sfc, errmsg = parse_expr_single(tl)
 
-    err = tl:skipNCName("return")
-    if err then
+    errmsg = tl:skipNCName("return")
+    if errmsg then
         leaveStep(tl, "4 parse_for_expr")
-        return nil, err
+        return nil, errmsg
     end
     local ef
-    ef, err = parse_expr_single(tl)
-    if err then
+    ef, errmsg = parse_expr_single(tl)
+    if errmsg then
         leaveStep(tl, "4 parse_for_expr")
-        return err
+        return errmsg
     end
 
     local evaler = function(ctx)
         local ret = {}
-        local seqfc, err
-        seqfc, err = sfc(ctx)
-        if err then return err end
+        local seqfc, errmsg
+        seqfc, errmsg = sfc(ctx)
+        if errmsg then return errmsg end
         for _, itm in ipairs(seqfc) do
             ctx.vars[varname] = { itm }
             ctx.context = { itm }
             local seq
-            seq, err = ef(ctx)
-            if err then return nil, err end
+            seq, errmsg = ef(ctx)
+            if errmsg then return nil, errmsg end
             for i = 1, #seq do
                 ret[#ret + 1] = seq[i]
             end
@@ -1112,49 +1137,49 @@ function parse_if_expr(tl)
     -- var nexttok *token
     -- var err error
     -- var boolEval, thenpart, elsepart EvalFunc
-    local nexttok, err
-    nexttok, err = tl:read()
-    if err then
+    local nexttok, errmsg
+    nexttok, errmsg = tl:read()
+    if errmsg then
         leaveStep(tl, "7 parse_if_expr")
-        return nil, err
+        return nil, errmsg
     end
     if nexttok[2] ~= "tokOpenParen" then
         return nil, string.format("open parenthesis expected, found %s", tostring(nexttok[1]))
     end
     local boolEval, thenpart, elsepart
-    boolEval, err = parse_expr(tl)
-    if err then
+    boolEval, errmsg = parse_expr(tl)
+    if errmsg then
         leaveStep(tl, "7 parse_if_expr")
-        return nil, err
+        return nil, errmsg
     end
     ok = tl:skipType("tokCloseParen")
     if not ok then
         leaveStep(tl, "7 parse_if_expr")
         return nil, ") expected"
     end
-    err = tl:skipNCName("then")
-    if err then
+    errmsg = tl:skipNCName("then")
+    if errmsg then
         leaveStep(tl, "7 parse_if_expr")
-        return nil, err
+        return nil, errmsg
     end
-    thenpart, err = parse_expr_single(tl)
-    if err then
+    thenpart, errmsg = parse_expr_single(tl)
+    if errmsg then
         leaveStep(tl, "7 parse_if_expr")
-        return nil, err
+        return nil, errmsg
     end
 
     tl:skipNCName("else")
-    elsepart, err = parse_expr_single(tl)
-    if err then
+    elsepart, errmsg = parse_expr_single(tl)
+    if errmsg then
         leaveStep(tl, "7 parse_if_expr")
-        return nil, err
+        return nil, errmsg
     end
     ef = function(ctx)
-        local res, bv, err
-        res, err = boolEval(ctx)
-        if err then return nil, err end
-        bv, err = boolean_value(res)
-        if err then return nil, err end
+        local res, bv, errmsg
+        res, errmsg = boolEval(ctx)
+        if errmsg then return nil, errmsg end
+        bv, errmsg = boolean_value(res)
+        if errmsg then return nil, errmsg end
         if bv then
             return thenpart(ctx)
         end
@@ -1171,13 +1196,13 @@ end
 ---@return string? error
 function parse_or_expr(tl)
     enterStep(tl, "8 parse_or_expr")
-    local err
+    local errmsg
     local efs = {}
     while true do
-        efs[#efs + 1], err = parse_and_expr(tl)
-        if err ~= nil then
+        efs[#efs + 1], errmsg = parse_and_expr(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "8 parse_or_expr")
-            return nil, err
+            return nil, errmsg
         end
         if not tl:readNexttokIfIsOneOfValue({ "or" }) then
             break
@@ -1189,16 +1214,16 @@ function parse_or_expr(tl)
     end
 
     local evaler = function(ctx)
-        local seq, err
+        local seq, errmsg
         for _, ef in ipairs(efs) do
-            seq, err = ef(ctx)
-            if err ~= nil then
-                return nil, err
+            seq, errmsg = ef(ctx)
+            if errmsg ~= nil then
+                return nil, errmsg
             end
             local bv
-            bv, err = boolean_value(seq)
-            if err ~= nil then
-                return nil, err
+            bv, errmsg = boolean_value(seq)
+            if errmsg ~= nil then
+                return nil, errmsg
             end
             if bv then return { true }, nil end
         end
@@ -1215,10 +1240,10 @@ end
 ---@return string? error
 function parse_and_expr(tl)
     enterStep(tl, "9 parse_and_expr")
-    local ef, err = parse_comparison_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_comparison_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "8 parse_or_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "9 parse_and_expr")
     return ef, nil
@@ -1231,17 +1256,17 @@ end
 ---@return string? error
 function parse_comparison_expr(tl)
     enterStep(tl, "10 parse_comparison_expr")
-    local lhs, err = parse_range_expr(tl)
-    if err ~= nil then
+    local lhs, errmsg = parse_range_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "10 parse_comparison_expr")
-        return nil, err
+        return nil, errmsg
     end
     local op
-    op, err = tl:readNexttokIfIsOneOfValue({ "=", "<", ">", "<=", ">=", "!=", "eq", "ne", "lt", "le", "gt", "ge", "is",
+    op, errmsg = tl:readNexttokIfIsOneOfValue({ "=", "<", ">", "<=", ">=", "!=", "eq", "ne", "lt", "le", "gt", "ge", "is",
         "<<", ">>" })
-    if err ~= nil then
+    if errmsg ~= nil then
         leaveStep(tl, "10 parse_comparison_expr")
-        return nil, err
+        return nil, errmsg
     end
     if not op then
         leaveStep(tl, "10 parse_comparison_expr")
@@ -1249,10 +1274,10 @@ function parse_comparison_expr(tl)
     end
 
     local rhs
-    rhs, err = parse_range_expr(tl)
-    if err ~= nil then
+    rhs, errmsg = parse_range_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "10 parse_comparison_expr")
-        return nil, err
+        return nil, errmsg
     end
 
     leaveStep(tl, "10 parse_comparison_expr")
@@ -1266,10 +1291,10 @@ end
 ---@return string? error
 function parse_range_expr(tl)
     enterStep(tl, "11 parse_range_expr")
-    local ef, err = parse_additive_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_additive_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "11 parse_range_expr")
-        return nil, err
+        return nil, errmsg
     end
 
     leaveStep(tl, "11 parse_range_expr")
@@ -1286,17 +1311,17 @@ function parse_additive_expr(tl)
     local efs = {}
     local operators = {}
     while true do
-        local ef, err = parse_multiplicative_expr(tl)
-        if err ~= nil then
+        local ef, errmsg = parse_multiplicative_expr(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "12 parse_additive_expr")
-            return nil, err
+            return nil, errmsg
         end
         efs[#efs + 1] = ef
         local op
-        op, err = tl:readNexttokIfIsOneOfValue({ "+", "-" })
-        if err ~= nil then
+        op, errmsg = tl:readNexttokIfIsOneOfValue({ "+", "-" })
+        if errmsg ~= nil then
             leaveStep(tl, "12 parse_additive_expr")
-            return nil, err
+            return nil, errmsg
         end
         if not op then break end
         operators[#operators + 1] = op[1]
@@ -1307,17 +1332,17 @@ function parse_additive_expr(tl)
     end
 
     local evaler = function(ctx)
-        local s0, err = efs[1](ctx)
-        if err ~= nil then return nil, err end
+        local s0, errmsg = efs[1](ctx)
+        if errmsg ~= nil then return nil, errmsg end
         local sum
-        sum, err = number_value(s0)
-        if err ~= nil then return nil, err end
+        sum, errmsg = number_value(s0)
+        if errmsg ~= nil then return nil, errmsg end
         for i = 2, #efs do
-            s0, err = efs[i](ctx)
-            if err ~= nil then return nil, err end
+            s0, errmsg = efs[i](ctx)
+            if errmsg ~= nil then return nil, errmsg end
             local val
-            val, err = number_value(s0)
-            if err ~= nil then return nil, err end
+            val, errmsg = number_value(s0)
+            if errmsg ~= nil then return nil, errmsg end
 
             if operators[i - 1] == "+" then
                 sum = sum + val
@@ -1342,17 +1367,17 @@ function parse_multiplicative_expr(tl)
     local efs = {}
     local operators = {}
     while true do
-        local ef, err = parse_union_expr(tl)
-        if err ~= nil then
+        local ef, errmsg = parse_union_expr(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "13 parse_multiplicative_expr (ue err)")
-            return nil, err
+            return nil, errmsg
         end
         efs[#efs + 1] = ef
         local op
-        op, err = tl:readNexttokIfIsOneOfValue({ "*", "mod", "div", "idiv" })
-        if err ~= nil then
+        op, errmsg = tl:readNexttokIfIsOneOfValue({ "*", "mod", "div", "idiv" })
+        if errmsg ~= nil then
             leaveStep(tl, "13 parse_multiplicative_expr")
-            return nil, err
+            return nil, errmsg
         end
         if not op then break end
         operators[#operators + 1] = op[1]
@@ -1363,18 +1388,18 @@ function parse_multiplicative_expr(tl)
     end
 
     local evaler = function(ctx)
-        local s0, err = efs[1](ctx)
-        if err ~= nil then return nil, err end
+        local s0, errmsg = efs[1](ctx)
+        if errmsg ~= nil then return nil, errmsg end
         local result
-        result, err = number_value(s0)
-        if err ~= nil then return nil, err end
+        result, errmsg = number_value(s0)
+        if errmsg ~= nil then return nil, errmsg end
         if not result then return nil, "number expected" end
         for i = 2, #efs do
-            s0, err = efs[i](ctx)
-            if err ~= nil then return nil, err end
+            s0, errmsg = efs[i](ctx)
+            if errmsg ~= nil then return nil, errmsg end
             local val
-            val, err = number_value(s0)
-            if err ~= nil then return nil, err end
+            val, errmsg = number_value(s0)
+            if errmsg ~= nil then return nil, errmsg end
 
             if operators[i - 1] == "*" then
                 result = result * val
@@ -1405,10 +1430,10 @@ end
 ---@return string? error
 function parse_union_expr(tl)
     enterStep(tl, "14 parse_union_expr")
-    local ef, err = parse_intersect_except_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_intersect_except_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "14 parse_union_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "14 parse_union_expr")
     return ef, nil
@@ -1421,10 +1446,10 @@ end
 ---@return string? error
 function parse_intersect_except_expr(tl)
     enterStep(tl, "15 parse_intersect_except_expr")
-    local ef, err = parse_instance_of_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_instance_of_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "15 parse_intersect_except_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "15 parse_intersect_except_expr")
     return ef, nil
@@ -1437,10 +1462,10 @@ end
 ---@return string? error
 function parse_instance_of_expr(tl)
     enterStep(tl, "16 parse_instance_of_expr")
-    local ef, err = parse_treat_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_treat_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "16 parse_instance_of_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "16 parse_instance_of_expr")
     return ef, nil
@@ -1453,10 +1478,10 @@ end
 ---@return string? error
 function parse_treat_expr(tl)
     enterStep(tl, "17 parse_treat_expr")
-    local ef, err = parse_castable_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_castable_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "17 parse_treat_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "17 parse_treat_expr")
     return ef, nil
@@ -1469,10 +1494,38 @@ end
 ---@return string? error
 function parse_castable_expr(tl)
     enterStep(tl, "18 parse_castable_expr")
-    local ef, err = parse_cast_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_cast_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "18 parse_castable_expr")
-        return nil, err
+        return nil, errmsg
+    end
+    if tl:readNexttokIfIsOneOfValue({ "castable" }) then
+        errmsg = tl:skipNCName("as")
+        if errmsg ~= nil then
+            leaveStep(tl, "18 parse_castable_expr")
+            return nil, errmsg
+        end
+        local tok
+        tok, errmsg = tl:read()
+        if errmsg ~= nil then
+            leaveStep(tl, "18 parse_castable_expr")
+            return nil, errmsg
+        end
+
+        local evaler = function(ctx)
+            local seq, errmsg = ef(ctx)
+            if errmsg ~= nil then return nil, errmsg end
+            if tok[1] == "xs:double" then
+                local nv, _ = number_value(seq)
+                if nv then return { true }, nil end
+            elseif tok[1] == "xs:string" then
+                local sv, _ = string_value(seq)
+                if sv then return { true }, nil end
+            end
+            return { false }, nil
+        end
+
+        return evaler, nil
     end
     leaveStep(tl, "18 parse_castable_expr")
     return ef, nil
@@ -1485,10 +1538,10 @@ end
 ---@return string? error
 function parse_cast_expr(tl)
     enterStep(tl, "19 parse_cast_expr")
-    local ef, err = parse_unary_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_unary_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "19 parse_cast_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "19 parse_cast_expr")
     return ef, nil
@@ -1503,10 +1556,10 @@ function parse_unary_expr(tl)
     enterStep(tl, "20 parse_unary_expr")
     local mult = 1
     while true do
-        local tok, err = tl:readNexttokIfIsOneOfValue({ "+", "-" })
-        if err ~= nil then
+        local tok, errmsg = tl:readNexttokIfIsOneOfValue({ "+", "-" })
+        if errmsg ~= nil then
             leaveStep(tl, "20 parse_unary_expr (err)")
-            return nil, err
+            return nil, errmsg
         end
         if tok == nil then
             break
@@ -1514,10 +1567,10 @@ function parse_unary_expr(tl)
         if tok[1] == "-" then mult = mult * -1 end
     end
 
-    local ef, err = parse_value_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_value_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "20 parse_unary_expr")
-        return nil, err
+        return nil, errmsg
     end
     if ef == nil then
         leaveStep(tl, "20 parse_unary_expr (nil ef)")
@@ -1526,13 +1579,13 @@ function parse_unary_expr(tl)
 
     local evaler = function(ctx)
         if mult == -1 then
-            local seq, err = ef(ctx)
-            if err ~= nil then
-                return nil, err
+            local seq, errmgs = ef(ctx)
+            if errmgs ~= nil then
+                return nil, errmgs
             end
-            flt, err = number_value(seq)
-            if err ~= nil then
-                return nil, err
+            flt, errmgs = number_value(seq)
+            if errmgs ~= nil then
+                return nil, errmgs
             end
             return { flt * -1 }, nil
         end
@@ -1549,10 +1602,10 @@ end
 ---@return string? error
 function parse_value_expr(tl)
     enterStep(tl, "21 parse_value_expr")
-    local ef, err = parse_path_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_path_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "21 parse_value_expr")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "21 parse_value_expr")
     return ef, nil
@@ -1567,10 +1620,10 @@ function parse_path_expr(tl)
     enterStep(tl, "25 parse_path_expr")
 
     local op = tl:readNexttokIfIsOneOfValue({ "/", "//" })
-    local ef, err = parse_relative_path_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_relative_path_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "25 parse_path_expr")
-        return nil, err
+        return nil, errmsg
     end
     if op then
         if op[1] == "/" then
@@ -1593,10 +1646,10 @@ function parse_relative_path_expr(tl)
     enterStep(tl, "26 parse_relative_path_expr")
     local efs = {}
     while true do
-        local ef, err = parse_step_expr(tl)
-        if err ~= nil then
+        local ef, errmsg = parse_step_expr(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "26 parse_relative_path_expr")
-            return nil, err
+            return nil, errmsg
         end
         efs[#efs + 1] = ef
         if not tl:readNexttokIfIsOneOfValue { "/", "//" } then
@@ -1617,9 +1670,9 @@ function parse_relative_path_expr(tl)
             for i, itm in ipairs(copysequence) do
                 ctx.sequence = { itm }
                 ctx.pos = i
-                local seq, err = ef(ctx)
-                if err then
-                    return nil, err
+                local seq, errmsg = ef(ctx)
+                if errmsg then
+                    return nil, errmsg
                 end
                 for _, val in ipairs(seq) do
                     retseq[#retseq + 1] = val
@@ -1640,16 +1693,16 @@ end
 ---@return string? error
 function parse_step_expr(tl)
     enterStep(tl, "27 parse_step_expr")
-    local ef, err = parse_filter_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_filter_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "27 parse_step_expr (err nil)")
-        return nil, err
+        return nil, errmsg
     end
     if not ef then
-        ef, err = parse_axis_step(tl)
-        if err ~= nil then
+        ef, errmsg = parse_axis_step(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "27 parse_step_expr")
-            return nil, err
+            return nil, errmsg
         end
     end
     leaveStep(tl, "27 parse_step_expr (leave)")
@@ -1664,12 +1717,12 @@ end
 ---@return string? error
 function parse_axis_step(tl)
     enterStep(tl, "28 parse_axis_step")
-    local err = nil
+    local errmsg = nil
     local ef
-    ef, err = parse_forward_step(tl)
-    if err ~= nil then
+    ef, errmsg = parse_forward_step(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "28 parse_axis_step")
-        return nil, err
+        return nil, errmsg
     end
     local predicates = {}
 
@@ -1679,10 +1732,10 @@ function parse_axis_step(tl)
         end
         local predicate
         tl:read()
-        predicate, err = parse_expr(tl)
-        if err then
+        predicate, errmsg = parse_expr(tl)
+        if errmsg then
             leaveStep(tl, "28 parse_axis_step (err)")
-            return nil, err
+            return nil, errmsg
         end
         predicates[#predicates + 1] = predicate
         tl:skipType("tokCloseBracket")
@@ -1690,14 +1743,14 @@ function parse_axis_step(tl)
 
     if #predicates > 0 then
         local ff = function(ctx)
-            local seq, err = ef(ctx)
-            if err then
-                return nil, err
+            local seq, errmsg = ef(ctx)
+            if errmsg then
+                return nil, errmsg
             end
             ctx.sequence = seq
             for _, predicate in ipairs(predicates) do
-                local _, err = filter(ctx, predicate)
-                if err then return nil, err end
+                local _, errmsg = filter(ctx, predicate)
+                if errmsg then return nil, errmsg end
             end
             ctx.size = #ctx.sequence
             return ctx.sequence, nil
@@ -1717,7 +1770,7 @@ end
 ---@return string? error
 function parse_forward_step(tl)
     enterStep(tl, "29 parse_forward_step")
-    local err = nil
+    local errmsg = nil
     local tf
     local axisChild, axisAttribute = 1, 2
     local stepAxis = axisChild
@@ -1729,10 +1782,10 @@ function parse_forward_step(tl)
         tl.attributeMode = false
     end
 
-    tf, err = parse_node_test(tl)
-    if err then
+    tf, errmsg = parse_node_test(tl)
+    if errmsg then
         leaveStep(tl, "29 parse_forward_step")
-        return nil, err
+        return nil, errmsg
     end
     if not tf then
         leaveStep(tl, "29 parse_forward_step (nil)")
@@ -1774,11 +1827,11 @@ end
 ---@return string? error
 function parse_node_test(tl)
     enterStep(tl, "35 parse_node_test")
-    local tf, err
-    tf, err = parse_name_test(tl)
-    if err then
+    local tf, errmsg
+    tf, errmsg = parse_name_test(tl)
+    if errmsg then
         leaveStep(tl, "35 parse_node_test")
-        return nil, err
+        return nil, errmsg
     end
     leaveStep(tl, "35 parse_node_test")
     return tf, nil
@@ -1791,13 +1844,13 @@ end
 ---@return string? error
 function parse_name_test(tl)
     enterStep(tl, "36 parse_name_test")
-    local tf, err
+    local tf, errmsg
     if tl:nextTokIsType("tokQName") then
         local n
-        n, err = tl:read()
-        if err then
+        n, errmsg = tl:read()
+        if errmsg then
             leaveStep(tl, "36 parse_name_test")
-            return nil, err
+            return nil, errmsg
         end
         if not n then
             return nil, "qname should not be empty"
@@ -1808,7 +1861,7 @@ function parse_name_test(tl)
             end
         else
             tf = function(itm)
-                if type(itm) == "table" and itm[".__type"] == "element" then
+                if is_element(itm) then
                     return itm[".__name"] == n[1]
                 end
                 return false
@@ -1817,7 +1870,7 @@ function parse_name_test(tl)
         leaveStep(tl, "36 parse_name_test")
         return tf, nil
     end
-    tf, err = parse_wild_card(tl)
+    tf, errmsg = parse_wild_card(tl)
     leaveStep(tl, "36 parse_name_test")
     return tf, nil
 end
@@ -1825,22 +1878,22 @@ end
 -- [37] Wildcard ::= "*" | (NCName ":" "*") | ("*" ":" NCName)
 function parse_wild_card(tl)
     enterStep(tl, "37 parse_wild_card")
-    local nexttok, err = tl:read()
-    if err ~= nil then
+    local nexttok, errmsg = tl:read()
+    if errmsg ~= nil then
         leaveStep(tl, "37 parse_wild_card")
-        return nil, err
+        return nil, errmsg
     end
     local str = nexttok[1]
     if str == "*" or str:match("^%*:") or str:match(":%*$") then
         if tl.attributeMode then
             tf = function(itm)
-                if type(itm) == "table" and itm[".__type"] == "attribute" then
+                if is_attribute(itm) then
                     return true
                 end
             end
         else
             tf = function(itm)
-                if type(itm) == "table" and itm[".__type"] == "element" then
+                if is_element(itm) then
                     return true
                 end
             end
@@ -1861,27 +1914,27 @@ end
 ---@return string? error
 function parse_filter_expr(tl)
     enterStep(tl, "38 parse_filter_expr")
-    local ef, err = parse_primary_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_primary_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "38 parse_filter_expr")
-        return nil, err
+        return nil, errmsg
     end
     while true do
         if tl:nextTokIsType("tokOpenBracket") then
             tl:read()
-            local f, err = parse_expr(tl)
-            if err ~= nil then
+            local f, errmsg = parse_expr(tl)
+            if errmsg ~= nil then
                 leaveStep(tl, "38 parse_filter_expr")
-                return nil, err
+                return nil, errmsg
             end
             if not tl:skipType("tokCloseBracket") then
                 leaveStep(tl, "38 parse_filter_expr")
                 return nil, "] expected"
             end
             local filterfunc = function(ctx)
-                local seq, err = ef(ctx)
-                if err then
-                    return nil, err
+                local seq, errmsg = ef(ctx)
+                if errmsg then
+                    return nil, errmsg
                 end
 
                 ctx.sequence = seq
@@ -1900,10 +1953,10 @@ end
 -- [41] PrimaryExpr ::= Literal | VarRef | ParenthesizedExpr | ContextItemExpr | FunctionCall
 function parse_primary_expr(tl)
     enterStep(tl, "41 parse_primary_expr")
-    local nexttok, err = tl:read()
-    if err ~= nil then
+    local nexttok, errmsg = tl:read()
+    if errmsg ~= nil then
         leaveStep(tl, "41 parse_primary_expr")
-        return nil, err
+        return nil, errmsg
     end
 
     -- StringLiteral
@@ -1926,10 +1979,10 @@ function parse_primary_expr(tl)
 
     -- ParenthesizedExpr
     if nexttok[2] == "tokOpenParen" then
-        local ef, err = parse_parenthesized_expr(tl)
-        if err ~= nil then
+        local ef, errmsg = parse_parenthesized_expr(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "41 parse_primary_expr")
-            return nil, err
+            return nil, errmsg
         end
         leaveStep(tl, "41 parse_primary_expr (op)")
         return ef, nil
@@ -1961,10 +2014,10 @@ function parse_primary_expr(tl)
         if tl:nextTokIsType("tokOpenParen") then
             tl:unread()
             local ef
-            ef, err = parse_function_call(tl)
-            if err ~= nil then
-                leaveStep(tl, "41 parse_primary_expr: " .. err)
-                return nil, err
+            ef, errmsg = parse_function_call(tl)
+            if errmsg ~= nil then
+                leaveStep(tl, "41 parse_primary_expr: " .. errmsg)
+                return nil, errmsg
             end
             leaveStep(tl, "41 parse_primary_expr (fc)")
             return ef, nil
@@ -1988,19 +2041,19 @@ function parse_parenthesized_expr(tl)
         return function(ctx) return {}, nil end
     end
 
-    local ef, err = parse_expr(tl)
-    if err ~= nil then
+    local ef, errmsg = parse_expr(tl)
+    if errmsg ~= nil then
         leaveStep(tl, "46 parse_parenthesized_expr (err)")
-        return nil, err
+        return nil, errmsg
     end
     if not tl:skipType("tokCloseParen") then
         leaveStep(tl, "46 parse_parenthesized_expr (err)")
-        return nil, err
+        return nil, errmsg
     end
     local evaler = function(ctx)
-        local seq, err = ef(ctx)
-        if err ~= nil then
-            return nil, err
+        local seq, errmsg = ef(ctx)
+        if errmsg ~= nil then
+            return nil, errmsg
         end
         return seq, nil
     end
@@ -2015,10 +2068,10 @@ end
 ---@return string? error
 function parse_function_call(tl)
     enterStep(tl, "48 parse_function_call")
-    local function_name_token, err = tl:read()
-    if err ~= nil then
+    local function_name_token, errmsg = tl:read()
+    if errmsg ~= nil then
         leaveStep(tl, "48 parse_function_call")
-        return nil, err
+        return nil, errmsg
     end
     if function_name_token == nil then
         return nil, "function name token expected"
@@ -2036,10 +2089,10 @@ function parse_function_call(tl)
     local efs = {}
     while true do
         local es
-        es, err = parse_expr_single(tl)
-        if err ~= nil then
+        es, errmsg = parse_expr_single(tl)
+        if errmsg ~= nil then
             leaveStep(tl, "48 parse_function_call")
-            return nil, err
+            return nil, errmsg
         end
         efs[#efs + 1] = es
         if not tl:nextTokIsType("tokComma") then
@@ -2056,10 +2109,10 @@ function parse_function_call(tl)
     local evaler = function(ctx)
         local arguments = {}
         -- TODO: save context and restore afterwards
-        local seq, err
+        local seq, errmsg
         for _, ef in ipairs(efs) do
-            seq, err = ef(ctx)
-            if err ~= nil then return nil, err end
+            seq, errmsg = ef(ctx)
+            if errmsg ~= nil then return nil, errmsg end
             arguments[#arguments + 1] = seq
         end
         return callFunction(function_name_token[1], arguments, ctx)
@@ -2072,11 +2125,31 @@ end
 ---@return evalfunc?
 ---@return string? error
 function M.parse_xpath(tl)
-    local evaler, err = parse_expr(tl)
-    if err ~= nil then
-        return nil, err
+    local evaler, errmsg = parse_expr(tl)
+    if errmsg ~= nil then
+        return nil, errmsg
     end
     return evaler, nil
 end
+
+---@param xpathstring string
+---@return table? sequence
+---@return string? error
+function context:eval(xpathstring)
+    local toks, msg = M.string_to_tokenlist(xpathstring)
+    if toks == nil then
+        return nil, msg
+    end
+    local evaler, errmsg = parse_expr(toks)
+    if errmsg ~= nil then
+        return nil, errmsg
+    end
+    if not evaler then
+        return nil, "internal error"
+    end
+
+    return evaler(self)
+end
+
 
 return M

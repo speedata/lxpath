@@ -82,6 +82,7 @@ function TestTokenizer:test_parse_simple()
         { "$one-two div $a", { 2.4 } },
         { "7 mod 3", { 1.0 } },
         { "9 * 4 div 6", { 6.0 } },
+        { "( 6 + 4 ) * 2", { 20.0 } },
         { "(1,2)", { 1.0, 2.0 } },
         { "(1,2) = (2,3)", { true } },
         { "(1,2) = (3,4)", { false } },
@@ -186,6 +187,13 @@ function TestTokenizer:test_parse_simple()
         { " if ( true() ) then 'a' else 'b' ", { 'a' } },
         { " /root/@one < 2 and /root/@one >= 1 ", { true } },
         { " /root/@one > 2 and /root/@one <= 1 ", { false } },
+        { " matches('abracadabra', 'bra') ", { true } },
+        { " 123 castable as xs:double ", { true } },
+        { " '123' castable as xs:double ", { true } },
+        { " 123 castable as xs:string ", { true } },
+        { " 'abc' castable as xs:double ", { false } },
+        { " string(/root/other[last()]/@foo) ", { 'other2' } },
+        -- { " replace('abracadabra', 'bra') ", { true } },
 
     }
 
