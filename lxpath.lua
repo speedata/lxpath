@@ -277,7 +277,7 @@ function M.string_to_tokenlist(str)
             nextrune, eof = read_rune(runes)
             if eof then break end
             if nextrune == '=' or nextrune == r then
-                tokens[#tokens + 1] = { r .. r, "tokOperator" }
+                tokens[#tokens + 1] = { r .. nextrune, "tokOperator" }
             else
                 tokens[#tokens + 1] = { r, "tokOperator" }
                 unread_rune(runes)
@@ -377,6 +377,9 @@ local function number_value(sequence)
     if #sequence > 1 then
         return nil, "number value, # must be 1"
     end
+    if is_attribute(sequence[1]) then
+        return tonumber(sequence[1].value)
+    end
     return tonumber(sequence[1]), nil
 end
 
@@ -453,13 +456,19 @@ local function docomparenumber(op, left, right)
     elseif op == ">=" then
         return left >= right, nil
     else
-        return nil, "not implemented: op " .. op
+        return nil, "not implemented: number comparison op " .. op
     end
 end
 
 local function docomparefunc(op, leftitem, rightitem)
     if type(leftitem) == "number" or type(rightitem) == "number" then
-        local x, errmsg = docomparenumber(op, number_value(leftitem), number_value(rightitem))
+        local r, l
+        local msg
+        l, msg = number_value(leftitem)
+        if msg then return nil, msg end
+        r, msg = number_value(rightitem)
+        if msg then return nil, msg end
+        local x, errmsg = docomparenumber(op, l, r)
         return x, errmsg
     elseif type(leftitem) == "string" or type(rightitem) == "string" then
         local x, errmsg = docomparestring(op, string_value({ leftitem }), string_value({ rightitem }))
@@ -670,6 +679,17 @@ local function fnReverse(ctx, seq)
     return ret, nil
 end
 
+local function fnRoot(ctx, seq)
+    if #seq ~= 0 then
+        return nil, "not yet implmented: root(arg)"
+    end
+    for i = 1, #ctx.xmldoc[1] do
+        local tab = ctx.xmldoc[1][i]
+        if is_element(tab) then return {tab},nil end
+    end
+    return nil, "no root found"
+end
+
 local function fnRound(ctx, seq)
     local firstarg = seq[1]
     if #firstarg == 0 then
@@ -785,6 +805,7 @@ local funcs = {
     { "number",               M.fnNS, fnNumber,             1, 1 },
     { "position",             M.fnNS, fnPosition,           0, 0 },
     { "reverse",              M.fnNS, fnReverse,            1, 1 },
+    { "root",                 M.fnNS, fnRoot,               0, 1 },
     { "round",                M.fnNS, fnRound,              1, 1 },
     -- { "starts-with",          M.fnNS, fnStartsWith,         2, 2 },
     -- { "ends-with",          M.fnNS, fnEndsWith,         2, 2 },
@@ -915,6 +936,13 @@ function context:root()
     return nil, "no root element found"
 end
 
+function context:document()
+    self.sequence = self.xmldoc
+    self.pos = nil
+    self.size = nil
+    return self.sequence
+end
+
 function context:attributeaixs()
     local seq = {}
     for _, itm in ipairs(self.sequence) do
@@ -946,6 +974,9 @@ function context:childaxis()
                     seq[#seq + 1] = cld
                 end
             else
+                for key, value in pairs(elt) do
+                    print(key, value)
+                end
                 assert(false, "table, not element")
             end
         elseif type(elt) == "string" then
@@ -958,7 +989,6 @@ function context:childaxis()
     return seq, nil
 end
 
-
 M.context = context
 -------------------------
 
@@ -966,10 +996,10 @@ M.context = context
 ---@param step string
 local function enterStep(tl, step)
     if M.dodebug then
-        local token, eof = tl:peek()
-        if eof then return end
+        local token, _ = tl:peek()
         token = token or { "-", "-" }
-        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
+        print(string.format("%s>%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
+        io.flush()
         debuglevel = debuglevel + 1
     end
 end
@@ -981,7 +1011,8 @@ local function leaveStep(tl, step)
         local token, _ = tl:peek()
         token = token or { "-", "-" }
         debuglevel = debuglevel - 1
-        print(string.format("%s%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
+        print(string.format("%s<%s: {%s,%s}", string.rep(M.debugindent, debuglevel), step, tostring(token[1]), token[2]))
+        io.flush()
     end
 end
 
@@ -1240,13 +1271,41 @@ end
 ---@return string? error
 function parse_and_expr(tl)
     enterStep(tl, "9 parse_and_expr")
-    local ef, errmsg = parse_comparison_expr(tl)
-    if errmsg ~= nil then
-        leaveStep(tl, "8 parse_or_expr")
-        return nil, errmsg
+    local efs = {}
+    while true do
+        tl.attributeMode = false
+        local ef, errmsg = parse_comparison_expr(tl)
+        if errmsg then
+            leaveStep(tl, "8 parse_or_expr")
+            return nil, errmsg
+        end
+        if ef then
+            efs[#efs + 1] = ef
+        end
+        if not tl:readNexttokIfIsOneOfValue({ "and" }) then
+            break
+        end
     end
+
+    if #efs == 1 then
+        leaveStep(tl, "9 parse_and_expr (#efs == 1)")
+        return efs[1], nil
+    end
+    local evaler = function(ctx)
+        local ef, msg, ok, seq
+        for i = 1, #efs do
+            ef = efs[i]
+            seq, msg = ef(ctx)
+            if msg then return nil, msg end
+            ok, msg = boolean_value(seq)
+            if msg then return nil, msg end
+            if not ok then return { false }, nil end
+        end
+        return { true }, nil
+    end
+
     leaveStep(tl, "9 parse_and_expr")
-    return ef, nil
+    return evaler, nil
 end
 
 -- [10] ComparisonExpr ::= RangeExpr ( (ValueComp | GeneralComp| NodeComp) RangeExpr )?
@@ -1262,7 +1321,8 @@ function parse_comparison_expr(tl)
         return nil, errmsg
     end
     local op
-    op, errmsg = tl:readNexttokIfIsOneOfValue({ "=", "<", ">", "<=", ">=", "!=", "eq", "ne", "lt", "le", "gt", "ge", "is",
+    op, errmsg = tl:readNexttokIfIsOneOfValue({ "=", "<", ">", "<=", ">=", "!=", "eq", "ne", "lt", "le", "gt", "ge",
+        "is",
         "<<", ">>" })
     if errmsg ~= nil then
         leaveStep(tl, "10 parse_comparison_expr")
@@ -1620,13 +1680,36 @@ function parse_path_expr(tl)
     enterStep(tl, "25 parse_path_expr")
 
     local op = tl:readNexttokIfIsOneOfValue({ "/", "//" })
-    local ef, errmsg = parse_relative_path_expr(tl)
+    local eof
+    _, eof = tl:peek()
+    if eof then
+        if op then
+            if op[1] == "/" then
+                local evaler = function(ctx)
+                    w("/, eof")
+                    ctx:document()
+                    return ctx.sequence, nil
+                end
+                return evaler
+            end
+            -- [err:XPST0003]
+            return nil, "// - unexpected EOF"
+        end
+    end
+    local rpe, errmsg = parse_relative_path_expr(tl)
     if errmsg ~= nil then
         leaveStep(tl, "25 parse_path_expr")
         return nil, errmsg
     end
     if op then
         if op[1] == "/" then
+            local evaler = function(ctx)
+                ctx:document()
+                seq, msg = rpe(ctx)
+                if msg then return nil, msg end
+                return seq, nil
+            end
+            return evaler, nil
             -- print("/")
         else
             assert(false, "nyi")
@@ -1634,7 +1717,7 @@ function parse_path_expr(tl)
     end
 
     leaveStep(tl, "25 parse_path_expr")
-    return ef, nil
+    return rpe, nil
 end
 
 -- [26] RelativePathExpr ::= StepExpr (("/" | "//") StepExpr)*
@@ -1644,6 +1727,7 @@ end
 ---@return string? error
 function parse_relative_path_expr(tl)
     enterStep(tl, "26 parse_relative_path_expr")
+
     local efs = {}
     while true do
         local ef, errmsg = parse_step_expr(tl)
@@ -1815,7 +1899,7 @@ function parse_forward_step(tl)
         return ret, nil
     end
 
-    leaveStep(tl, "29 parse_forward_step")
+    leaveStep(tl, "29 parse_forward_step (exit)")
 
     return evaler, nil
 end
@@ -1855,14 +1939,15 @@ function parse_name_test(tl)
         if not n then
             return nil, "qname should not be empty"
         end
+        local name = n[1]
         if tl.attributeMode then
             tf = function(itm)
-                return itm.name == n[1]
+                return itm.name == name
             end
         else
             tf = function(itm)
                 if is_element(itm) then
-                    return itm[".__name"] == n[1]
+                    return itm[".__name"] == name
                 end
                 return false
             end
@@ -1955,7 +2040,7 @@ function parse_primary_expr(tl)
     enterStep(tl, "41 parse_primary_expr")
     local nexttok, errmsg = tl:read()
     if errmsg ~= nil then
-        leaveStep(tl, "41 parse_primary_expr")
+        leaveStep(tl, "41 parse_primary_expr (err)")
         return nil, errmsg
     end
 
@@ -1981,7 +2066,7 @@ function parse_primary_expr(tl)
     if nexttok[2] == "tokOpenParen" then
         local ef, errmsg = parse_parenthesized_expr(tl)
         if errmsg ~= nil then
-            leaveStep(tl, "41 parse_primary_expr")
+            leaveStep(tl, "41 parse_primary_expr (err2)")
             return nil, errmsg
         end
         leaveStep(tl, "41 parse_primary_expr (op)")
@@ -2140,6 +2225,9 @@ function context:eval(xpathstring)
     if toks == nil then
         return nil, msg
     end
+    if #toks == 0 then
+        return {}, nil
+    end
     local evaler, errmsg = parse_expr(toks)
     if errmsg ~= nil then
         return nil, errmsg
@@ -2150,6 +2238,5 @@ function context:eval(xpathstring)
 
     return evaler(self)
 end
-
 
 return M
