@@ -40,7 +40,8 @@ function TestTokenizer:test1()
         { "123.4",        { { 123.4, "tokNumber" } } },
         { " 2 +2",        { { 2, "tokNumber" }, { '+', "tokOperator" }, { 2, "tokNumber" } } },
         { " abc // def ", { { "abc", "tokQName" }, { '//', "tokOperator" }, { "def", "tokQName" } } },
-        { " false() ",    { { "false", "tokQName" }, { '(', "tokOpenParen" }, { ')', "tokCloseParen" } } }
+        { " false() ",    { { "false", "tokQName" }, { '(', "tokOpenParen" }, { ')', "tokCloseParen" } } },
+        { "a('-')",{ { "a", "tokQName" }, { '(', "tokOpenParen" },{"-", "tokString"},{ ')', "tokCloseParen" } } },
     }
 
     for _, tc in ipairs(testdata) do
@@ -158,6 +159,7 @@ function TestTokenizer:test_parse_simple()
         { "round( -7.5 )", { -7.0 } },
         { "round( -7.50001 )", { -8.0 } },
         { "string-join( ( 'a','b', 'c'),', '  )", { "a, b, c" } },
+        { "string-join( ('Go','home,', 'Jack!',''),'-')", { 'Go-home,-Jack!-' } },
         { "string-length( 'a' )", { 1 } },
         { "string-length( 'ä' )", { 1 } },
         { "upper-case( 'aäÄ' )", { "AäÄ" } },
@@ -197,6 +199,8 @@ function TestTokenizer:test_parse_simple()
         { " 123 castable as xs:string ", { true } },
         { " 'abc' castable as xs:double ", { false } },
         { " string(/root/other[last()]/@foo) ", { 'other2' } },
+        { " boolean(/root)", { true } },
+
         -- { " replace('abracadabra', 'bra') ", { true } },
 
     }

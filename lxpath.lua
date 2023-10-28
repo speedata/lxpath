@@ -5,6 +5,7 @@ local M = {
     debugindent = "  ",
     fnNS = "http://www.w3.org/2005/xpath-functions",
     xsNS = "http://www.w3.org/2001/XMLSchema",
+    stringmatch = string.match
 }
 
 local debuglevel = 0
@@ -25,15 +26,15 @@ local function read_rune(tbl)
 end
 
 local function is_letter(str)
-    return string.match(str, "%w")
+    return M.stringmatch(str, "%w")
 end
 
 local function is_digit(str)
-    return string.match(str, "[0-9]")
+    return M.stringmatch(str, "[0-9]")
 end
 
 local function is_space(str)
-    return string.match(str, "%s")
+    return M.stringmatch(str, "%s")
 end
 
 ---@param runes table
@@ -355,12 +356,15 @@ end
 local function is_element(itm)
     return type(itm) == "table" and itm[".__type"] == "element"
 end
+M.is_element = is_element
 
 local function is_attribute(itm)
     return type(itm) == "table" and itm[".__type"] == "attribute"
 end
 
 local function number_value(sequence)
+    if type(sequence) == "string" then return tonumber(sequence) end
+
     if is_attribute(sequence) then
         return tonumber(sequence.value)
     end
@@ -394,6 +398,7 @@ local function boolean_value(seq)
         ok = (val ~= 0 and val == val)
     elseif type(val) == "boolean" then
         ok = val
+    elseif is_element(val) then return true
     end
     return ok, nil
 end
@@ -411,6 +416,8 @@ local function string_value(seq)
             end
         elseif is_attribute(itm) then
             ret[#ret + 1] = itm.value
+        elseif type(itm) == "table" then
+            ret[#ret + 1] = string_value(itm)
         else
             ret[#ret + 1] = tostring(itm)
         end
@@ -461,14 +468,15 @@ local function docomparenumber(op, left, right)
 end
 
 local function docomparefunc(op, leftitem, rightitem)
-    if type(leftitem) == "number" or type(rightitem) == "number" then
-        local r, l
-        local msg
-        l, msg = number_value(leftitem)
-        if msg then return nil, msg end
-        r, msg = number_value(rightitem)
-        if msg then return nil, msg end
-        local x, errmsg = docomparenumber(op, l, r)
+    if is_attribute(leftitem) then leftitem = leftitem.value end
+    if is_attribute(rightitem) then rightitem = rightitem.value end
+
+    local ln,rn
+    ln,_ = number_value(leftitem)
+    rn,_ = number_value(rightitem)
+
+    if type(ln) == "number" and type(rn) == "number"  then
+        local x, errmsg = docomparenumber(op, ln, rn)
         return x, errmsg
     elseif type(leftitem) == "string" or type(rightitem) == "string" then
         local x, errmsg = docomparestring(op, string_value({ leftitem }), string_value({ rightitem }))
@@ -685,7 +693,10 @@ local function fnRoot(ctx, seq)
     end
     for i = 1, #ctx.xmldoc[1] do
         local tab = ctx.xmldoc[1][i]
-        if is_element(tab) then return {tab},nil end
+        if is_element(tab) then
+            ctx.sequence = {tab}
+            return {tab},nil
+        end
     end
     return nil, "no root found"
 end
@@ -920,6 +931,21 @@ function context:new(o)
     setmetatable(o, self)
     self.__index = self
     return o
+end
+
+---@return context
+function context:copy()
+    local newcontexttab = {
+        xmldoc = self.xmldoc,
+        sequence = self.sequence,
+        vars = self.vars,
+        pos = self.pos,
+        size = self.size,
+        namespaces = self.namespaces,
+    }
+
+    local newcontext = context:new(newcontexttab)
+    return newcontext
 end
 
 ---@alias xmlelement table
@@ -1624,6 +1650,10 @@ function parse_unary_expr(tl)
         if tok == nil then
             break
         end
+        if tok[2] == "tokString" then
+            tl:unread()
+            break
+        end
         if tok[1] == "-" then mult = mult * -1 end
     end
 
@@ -2217,10 +2247,34 @@ function M.parse_xpath(tl)
     return evaler, nil
 end
 
+-- Execute the xpath and restore the context.
 ---@param xpathstring string
 ---@return table? sequence
 ---@return string? error
 function context:eval(xpathstring)
+    local toks, msg = M.string_to_tokenlist(xpathstring)
+    if toks == nil then
+        return nil, msg
+    end
+    if #toks == 0 then
+        return {}, nil
+    end
+    local evaler, errmsg = parse_expr(toks)
+    if errmsg ~= nil then
+        return nil, errmsg
+    end
+    if not evaler then
+        return nil, "internal error"
+    end
+    local copy = self:copy()
+    return evaler(copy)
+end
+
+-- Execute the xpath string
+---@param xpathstring string
+---@return table? sequence
+---@return string? error
+function context:execute(xpathstring)
     local toks, msg = M.string_to_tokenlist(xpathstring)
     if toks == nil then
         return nil, msg
@@ -2240,3 +2294,4 @@ function context:eval(xpathstring)
 end
 
 return M
+
