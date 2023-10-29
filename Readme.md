@@ -57,6 +57,7 @@ All input is expected to be in UTF8.
 
 This library is not unicode aware! This means for example `upper-case('ä')` is not `Ä`, but `ä`, since there is no lookup table for unicode.
 
+You can provide your own implementations for `string.match` and `string.find` (which might be UTF8 ready) by setting `M.stringmatch` and `M.stringfind`.
 
 ## Limitations
 

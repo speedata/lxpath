@@ -5,7 +5,8 @@ local M = {
     debugindent = "  ",
     fnNS = "http://www.w3.org/2005/xpath-functions",
     xsNS = "http://www.w3.org/2001/XMLSchema",
-    stringmatch = string.match
+    stringmatch = string.match,
+    stringfind = string.find
 }
 
 local debuglevel = 0
@@ -506,6 +507,23 @@ local function docompare(op, lhs, rhs)
     return evaler, nil
 end
 
+local function patternescape(s)
+    return (s:gsub('%%', '%%%%')
+            :gsub('^%^', '%%^')
+            :gsub('%$$', '%%$')
+            :gsub('%(', '%%(')
+            :gsub('%)', '%%)')
+            :gsub('%.', '%%.')
+            :gsub('%[', '%%[')
+            :gsub('%]', '%%]')
+            :gsub('%*', '%%*')
+            :gsub('%+', '%%+')
+            :gsub('%-', '%%-')
+            :gsub('%?', '%%?'))
+end
+
+
+
 local function fnAbs(cts, seq)
     local firstarg = seq[1]
     local n, errmsg = number_value(firstarg)
@@ -564,6 +582,14 @@ end
 
 local function fnEmpty(ctx, seq)
     return { #seq[1] == 0 }, nil
+end
+
+local function fnEndsWith(ctx, seq)
+    local firstarg = string_value(seq[1])
+    local secondarg = string_value(seq[2])
+    secondarg = patternescape(secondarg)
+    local m = M.stringmatch(firstarg, secondarg .. "$")
+    return { m ~= nil },nil
 end
 
 local function fnFalse(ctx, seq)
@@ -724,6 +750,14 @@ local function fnString(ctx, seq)
     return { x }, nil
 end
 
+local function fnStartsWith(ctx, seq)
+    local firstarg = string_value(seq[1])
+    local secondarg = string_value(seq[2])
+    secondarg = patternescape(secondarg)
+    local m = M.stringmatch(firstarg,"^" .. secondarg)
+    return { m ~= nil },nil
+end
+
 local function fnStringJoin(ctx, seq)
     local firstarg = seq[1]
     local secondarg = seq[2]
@@ -781,6 +815,24 @@ local function fnSubstring(ctx, seq)
     return { table.concat(ret) }, nil
 end
 
+local function fnSubstringAfter(ctx, seq)
+    local firstarg = string_value(seq[1])
+    local secondarg = string_value(seq[2])
+    local a,b = M.stringfind(firstarg,secondarg,1,true)
+    if not a then return {""},nil end
+    return { string.sub(firstarg,b+1,-1) }
+end
+
+
+local function fnSubstringBefore(ctx, seq)
+    local firstarg = string_value(seq[1])
+    local secondarg = string_value(seq[2])
+    local a = M.stringfind(firstarg,secondarg,1,true)
+    if not a then return {""},nil end
+    return { string.sub(firstarg,1, a -1) }
+end
+
+
 local function fnTrue(ctx, seq)
     return { true }, nil
 end
@@ -818,14 +870,14 @@ local funcs = {
     { "reverse",              M.fnNS, fnReverse,            1, 1 },
     { "root",                 M.fnNS, fnRoot,               0, 1 },
     { "round",                M.fnNS, fnRound,              1, 1 },
-    -- { "starts-with",          M.fnNS, fnStartsWith,         2, 2 },
-    -- { "ends-with",          M.fnNS, fnEndsWith,         2, 2 },
-    -- { "substring-after",          M.fnNS, fnSubstringAfter,         2, 2 },
-    -- { "substring-before",          M.fnNS, fnSubstringBefore,         2, 2 },
+    { "starts-with",          M.fnNS, fnStartsWith,         2, 2 },
+    { "ends-with",            M.fnNS, fnEndsWith,           2, 2 },
+    { "substring-after",      M.fnNS, fnSubstringAfter,     2, 2 },
+    { "substring-before",     M.fnNS, fnSubstringBefore,    2, 2 },
     { "string-join",          M.fnNS, fnStringJoin,         2, 2 },
-    { "string-length",        M.fnNS, fnStringLength,       1, 1 },
+    { "string-length",        M.fnNS, fnStringLength,       0, 1 },
     { "string-to-codepoints", M.fnNS, fnStringToCodepoints, 1, 1 },
-    { "string",               M.fnNS, fnString,             1, 1 },
+    { "string",               M.fnNS, fnString,             0, 1 },
     { "substring",            M.fnNS, fnSubstring,          2, 3 },
     { "true",                 M.fnNS, fnTrue,               0, 0 },
     { "upper-case",           M.fnNS, fnUpperCase,          1, 1 },
@@ -856,6 +908,16 @@ local function callFunction(fname, seq, ctx)
         fname = fn[2]
     end
     local func = getFunction(namespace, fname)
+    local minarg, maxarg = func[4], func[5]
+
+    if #seq < minarg or ( maxarg ~= -1 and #seq > maxarg ) then
+        if minarg == maxarg then
+            return {}, string.format("function %s requires %d arguments, %d supplied",func[1],minarg,#seq)
+        else
+            return {}, string.format("function %s requires %d to %d arguments, %d supplied",func[1],minarg,maxarg,#seq)
+        end
+    end
+
     if func then
         return func[3](ctx, seq)
     end
@@ -928,6 +990,7 @@ local context = {}
 
 function context:new(o)
     o = o or {} -- create object if user does not provide one
+    o.vars = o.vars or {}
     setmetatable(o, self)
     self.__index = self
     return o
@@ -938,12 +1001,14 @@ function context:copy()
     local newcontexttab = {
         xmldoc = self.xmldoc,
         sequence = self.sequence,
-        vars = self.vars,
+        vars = {},
         pos = self.pos,
         size = self.size,
         namespaces = self.namespaces,
     }
-
+    for key, value in pairs(self.vars) do
+        newcontexttab.vars[key] = value
+    end
     local newcontext = context:new(newcontexttab)
     return newcontext
 end
@@ -2107,9 +2172,11 @@ function parse_primary_expr(tl)
     -- VarRef
     if nexttok[2] == "tokVarname" then
         local evaler = function(ctx)
-            local value = ctx.vars[nexttok[1]]
+            local varname = nexttok[1]
+            local value = ctx.vars[varname]
             if type(value) == "table" then return value, nil end
-            return { ctx.vars[nexttok[1]] }, nil
+            if not ctx.vars[varname] then return nil, string.format("variable %s does not exist",varname) end
+            return { ctx.vars[varname] }, nil
         end
         leaveStep(tl, "41 parse_primary_expr (vr)")
         return evaler, nil

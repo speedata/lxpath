@@ -49,6 +49,31 @@ function TestTokenizer:test1()
     end
 end
 
+function TestTokenizer:test_parse_error()
+    local testdata = {
+        { [[  string-join((1,2)) ]] }
+    }
+    for _, td in ipairs(testdata) do
+        local ctxvalue = {
+            namespaces = {
+                fn = lxpath.fnNS
+            },
+            vars = {
+                foo = "bar",
+                onedotfive = 1.5,
+                a = 5,
+                ["one-two"] = 12,
+            },
+            xmldoc = { xmltab },
+            sequence = { xmltab }
+        }
+        local ctx = lxpath.context:new(ctxvalue)
+        local str = td[1]
+        local _, msg = ctx:eval(str)
+        luaunit.assertNotIsNil(msg,string.format("test %s should give an error",td[1]))
+    end
+end
+
 function TestTokenizer:test_parse_simple()
     local testdata = {
         { "+-+-+2", { 2.0 } },
@@ -170,6 +195,16 @@ function TestTokenizer:test_parse_simple()
         { "substring( 'öäü', 2 )", { "äü" } },
         { "substring( 'Goldfarb', 5 )", { "farb" } },
         { "substring( 'Goldfarb', 5,3 )", { "far" } },
+        { [[ starts-with("tattoo", "tat") ]], { true } },
+        { [[ starts-with("$t%attoo", "$t%at") ]], { true } },
+        { [[ starts-with("tattoo", "tat") ]], { true } },
+        { [[ starts-with( (), () ) ]], { true } },
+        { [[ starts-with( (), () ) ]], { true } },
+        { [[ ends-with( (), () ) ]], { true } },
+        { [[ ends-with("tattoo", "too") ]], { true } },
+        { [[ ends-with("tatto$o$", "$o$") ]], { true } },
+        { [[ substring-after("tattoo", "tat") ]], { "too" } },
+        { [[ substring-before ( "tattoo", "att") ]], { "t" } },
         { "count( /root/sub[@foo='bar'] )", { 2 } },
         { "count( /root/sub[@foo='doesnotexist'] )", { 0 } },
         { "( 'str', /root/@doesnotexist )[1] = 'str'", { true } },
