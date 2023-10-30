@@ -1,13 +1,11 @@
 ## Pure Lua XPath 2.0 parser
 
-Work in progress, not usable at the moment.
+Work in progress. This will be part of the [speedata Publisher](https://github.com/speedata/publisher/) version 5.
 
-This will be part of the [speedata Publisher](https://github.com/speedata/publisher/) version 5.
-
+See the test file to get get idea of the amount of XPath functionality that is implemented.
 
 ### Using the library
 
-The API is subject to change!
 
 ```lua
 -- crate a context with variables, namespaces and an XML document
@@ -45,6 +43,20 @@ local seq, errmsg = ef(ctx)
 -- Each item can be a sequence, an element, an attribute, a string or a number.
 ```
 
+You can also run one of the convenience functions:
+
+```lua
+sequence, errormessage = ctx:eval("xpath string")
+```
+
+and
+
+```lua
+sequence, errormessage = ctx:execute("xpath string")
+```
+
+The difference is that the `eval()` does not change the context, it only returns the sequence. `execute()` changes self.
+
 ## Running the tests
 
 ```
@@ -62,9 +74,9 @@ You can provide your own implementations for `string.match` and `string.find` (w
 ## Limitations
 
 * This library is not unicode aware (see above).
-* Since Lua does not have “real” regular expressions, the functions that expect regular expressions behave in a strange way.
+* Since Lua does not have “real” regular expressions, the functions that expect regular expressions are not implemented (`matches()`, `replace()`, `tokenize()`). You should provide your own implementations of these functions.
 
-You can always override the XPath functions.
+You can override the XPath functions.
 
 ## Registering new XPath functions
 
@@ -74,7 +86,7 @@ It expects a table with the following fields:
 
 1. function name
 2. namespace
-3. function
+3. function (where the arguments are the context and the provided arguments)
 4. minimum number of arguments
 5. maximum number of arguments (-1 if arbitrary many arguments allowed)
 

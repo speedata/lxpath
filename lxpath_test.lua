@@ -42,6 +42,7 @@ function TestTokenizer:test1()
         { " abc // def ", { { "abc", "tokQName" }, { '//', "tokOperator" }, { "def", "tokQName" } } },
         { " false() ",    { { "false", "tokQName" }, { '(', "tokOpenParen" }, { ')', "tokCloseParen" } } },
         { "a('-')",{ { "a", "tokQName" }, { '(', "tokOpenParen" },{"-", "tokString"},{ ')', "tokCloseParen" } } },
+        { [[ a("a",'/') ]],{ { "a", "tokQName" }, { '(', "tokOpenParen" },{"a", "tokString"},{",", "tokComma"},{"/", "tokString"},{ ')', "tokCloseParen" } } },
     }
 
     for _, tc in ipairs(testdata) do
@@ -51,7 +52,7 @@ end
 
 function TestTokenizer:test_parse_error()
     local testdata = {
-        { [[  string-join((1,2)) ]] }
+        { [[  string-join((1,2)) ]] } -- one argument instead of two
     }
     for _, td in ipairs(testdata) do
         local ctxvalue = {
@@ -104,6 +105,7 @@ function TestTokenizer:test_parse_simple()
         { "8 mod 2 = 0 ", { true } },
         { "4 < 2  or 5 < 7 ", { true } },
         { "concat('abc','def')", { "abcdef" } },
+        { "concat(4,'/',6)", { "4/6" } },
         { "string(number('zzz')) = 'NaN'", { true } },
         { "$foo", { "bar" } },
         { "$onedotfive + 2", { 3.5 } },
@@ -138,6 +140,7 @@ function TestTokenizer:test_parse_simple()
         { "boolean( () )", { false } },
         { "boolean( (()) )", { false } },
         { "boolean( 'false' )", { true } },
+        { "boolean(/root)", { true } },
         { "count(/root/sub)", { 3.0 } },
         { "contains( '', '' )", { true } },
         { "contains( (), 'a' )", { false } },
@@ -234,10 +237,6 @@ function TestTokenizer:test_parse_simple()
         { " 123 castable as xs:string ", { true } },
         { " 'abc' castable as xs:double ", { false } },
         { " string(/root/other[last()]/@foo) ", { 'other2' } },
-        { " boolean(/root)", { true } },
-
-        -- { " replace('abracadabra', 'bra') ", { true } },
-
     }
 
     for _, td in ipairs(testdata) do

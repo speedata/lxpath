@@ -1773,8 +1773,10 @@ end
 ---@return string? error
 function parse_path_expr(tl)
     enterStep(tl, "25 parse_path_expr")
-
-    local op = tl:readNexttokIfIsOneOfValue({ "/", "//" })
+    local op
+    if tl:nextTokIsType('tokOperator') then
+        op = tl:readNexttokIfIsOneOfValue({ "/", "//" })
+    end
     local eof
     _, eof = tl:peek()
     if eof then
