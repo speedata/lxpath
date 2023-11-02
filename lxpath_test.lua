@@ -127,6 +127,8 @@ function TestTokenizer:test_parse_simple()
         { "(1,2)[true()]", { 1.0, 2.0 } },
         { "(1,2)[false()]", {} },
         { "( (),2 )[1]", { 2.0 } },
+        { "1 to 3", { 1.0,2.0,3.0 } },
+        { "for $foo in 1 to 3 return $foo * 2", { 2.0,4.0,6.0 } },
         { "string(/root/@one)", { "1" } },
         { "abs( - 2 )", { 2.0 } },
         { "abs( -3.7 )", { 3.7 } },
