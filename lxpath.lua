@@ -1078,25 +1078,14 @@ function context:childaxis(testfunc)
     local seq = {}
     for _, elt in ipairs(self.sequence) do
         if type(elt) == "table" then
-            if is_element(elt) or is_document(elt) then
-                for _, child in ipairs(elt) do
-                    if is_element(child) then
-                        child[".__parent"] = elt
-                    end
-                    if testfunc(child) then
-                        seq[#seq + 1] = child
-                    end
+            for _, child in ipairs(elt) do
+                if is_element(child) then
+                    child[".__parent"] = elt
                 end
-            else
-                for key, value in pairs(elt) do
-                    print(key, value)
+                if testfunc(child) then
+                    seq[#seq + 1] = child
                 end
-                assert(false, "table, not element")
             end
-        elseif type(elt) == "string" then
-            seq[#seq + 1] = elt
-        else
-            assert(false)
         end
     end
     self.sequence = seq
@@ -2190,18 +2179,16 @@ function parse_path_expr(tl)
         return nil, errmsg
     end
     if op then
-        if op[1] == "/" then
-            local evaler = function(ctx)
-                ctx:document()
-                seq, msg = rpe(ctx)
-                if msg then return nil, msg end
-                return seq, nil
+        local evaler = function(ctx)
+            ctx:document()
+            if op[1] == "//" then
+                ctx:descendantOrSelf(function() return true end)
             end
-            return evaler, nil
-            -- print("/")
-        else
-            assert(false, "nyi")
+            seq, msg = rpe(ctx)
+            if msg then return nil, msg end
+            return seq, nil
         end
+        return evaler, nil
     end
 
     leaveStep(tl, "25 parse_path_expr")
@@ -2531,6 +2518,8 @@ function parse_name_test(tl)
         else
             tf = function(itm)
                 if is_element(itm) then
+                    if itm[".__name"] == name then
+                    end
                     return itm[".__name"] == name
                 end
                 return false

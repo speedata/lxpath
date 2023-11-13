@@ -211,6 +211,7 @@ function TestTokenizer:test_parse_simple()
         { [[ substring-after("tattoo", "tat") ]],                                { "too" } },
         { [[ substring-before ( "tattoo", "att") ]],                             { "t" } },
         { "count( /root/sub[@foo='bar'] )",                                      { 2 } },
+        { "count( //sub )",                                                      { 7.0 } },
         { "count( /root/sub[@foo='doesnotexist'] )",                             { 0 } },
         { "( 'str', /root/@doesnotexist )[1] = 'str'",                           { true } },
         { "(/root/sub[@foo='bar']/last())[1]",                                   { 2 } },
