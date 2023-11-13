@@ -239,6 +239,10 @@ function TestTokenizer:test_parse_simple()
         { " 123 castable as xs:string ",                                         { true } },
         { " 'abc' castable as xs:double ",                                       { false } },
         { " string(/root/other[last()]/@foo) ",                                  { 'other2' } },
+        { [[ every $i in /root/sub satisfies $i/@foo="bar"]],                    { false } },
+        { [[ some $i in /root/sub satisfies $i/@foo="bar"]],                     { true } },
+        { [[ some $i in /root/sub satisfies $i/@foo="zzzz"]],                    { false } },
+        { [[ some $x in (1, 2, 3), $y in (2, 3) satisfies $x + $y = 4]],         { true } },
     }
 
     for _, td in ipairs(testdata) do

@@ -209,13 +209,19 @@ end
 ---@param tokvalues table
 ---@return token?
 ---@return string?
-function tokenlist:readNexttokIfIsOneOfValue(tokvalues)
+function tokenlist:readNexttokIfIsOneOfValue(tokvalues, typ)
     if self.pos > #self then
         return nil, nil
     end
     for _, tokvalue in ipairs(tokvalues) do
         if self[self.pos][1] == tokvalue then
-            return self:read()
+            if typ and self[self.pos][2] == typ then
+                return self:read()
+            elseif typ and self[self.pos][2] ~= typ then
+                -- ignore
+            else
+                return self:read()
+            end
         end
     end
     return nil, nil
@@ -398,6 +404,9 @@ local function number_value(sequence)
 end
 
 local function boolean_value(seq)
+    if type(seq) == "boolean" then
+        return seq
+    end
     if #seq == 0 then return false, nil end
     if #seq > 1 then return false, "invalid argument for boolean value" end
     local val = seq[1]
@@ -1402,18 +1411,17 @@ end
 ---@return string? error
 function parse_expr_single(tl)
     enterStep(tl, "3 parse_expr_single")
-    local tok, errmsg = tl:readNexttokIfIsOneOfValue({ "for", "some", "if" })
-    if errmsg then
-        leaveStep(tl, "3 parse_expr_single")
-        return nil, errmsg
-    end
-    if tok then
+    local tok, errmsg
+    tok = tl:peek()
+    if tok and tok[2] == "tokQName" and (tok[1] == "for" or tok[1] == "some" or tok[1] == "every" or tok[1] == "if") then
         local ef
         if tok[1] == "for" then
+            tl:read()
             ef, errmsg = parse_for_expr(tl)
-        elseif tok[1] == "some" then
-            assert(false, "nyi")
+        elseif tok[1] == "some" or tok[1] == "every" then
+            ef, errmsg = parse_quantified_expr(tl)
         elseif tok[1] == "if" then
+            tl:read()
             ef, errmsg = parse_if_expr(tl)
         else
             return nil, "nil"
@@ -1485,6 +1493,122 @@ function parse_for_expr(tl)
         return ret, nil
     end
     leaveStep(tl, "4 parse_for_expr")
+    return evaler, nil
+end
+
+-- [6] QuantifiedExpr ::= ("some" | "every") "$" VarName "in" ExprSingle ("," "$" VarName "in" ExprSingle)* "satisfies" ExprSingle
+--
+---@param tl tokenlist
+---@return evalfunc?
+---@return string? error
+function parse_quantified_expr(tl)
+    enterStep(tl, "6 parse_quantified_expr")
+    local efs, varnames = {}, {}
+    local ef, errmsg
+    local someEveryTok = tl:read()
+    if not someEveryTok then
+        return nil, "some or every expected"
+    end
+    local someEvery = someEveryTok[1]
+    while true do
+        local vartok, errmsg = tl:read()
+        if errmsg then
+            leaveStep(tl, "6 parse_quantified_expr")
+            return nil, errmsg
+        end
+        if not vartok then
+            leaveStep(tl, "6 parse_quantified_expr")
+            return nil, "could not read variable name"
+        end
+        if vartok[2] ~= "tokVarname" then
+            leaveStep(tl, "6 parse_quantified_expr")
+            return nil, "variable expected"
+        end
+        local varname = vartok[1]
+        local intok = tl:readNexttokIfIsOneOfValue({ "in" }, "tokQName")
+        if not intok then
+            leaveStep(tl, "6 parse_quantified_expr")
+            return nil, "\"in\" expected"
+        end
+        ef, errmsg = parse_expr_single(tl)
+        if errmsg then
+            leaveStep(tl, "6 parse_quantified_expr")
+            return nil, errmsg
+        end
+        efs[#efs + 1] = ef
+        varnames[#varnames + 1] = varname
+        local comma = tl:readNexttokIfIsOneOfValue({ "," }, "tokComma")
+        if not comma then break end
+    end
+    local intok = tl:readNexttokIfIsOneOfValue({ "satisfies" }, "tokQName")
+    if not intok then
+        leaveStep(tl, "6 parse_quantified_expr")
+        return nil, "\"satisfies\" expected"
+    end
+    local singleef
+    singleef, errmsg = parse_expr_single(tl)
+    if errmsg then
+        leaveStep(tl, "6 parse_quantified_expr")
+        return nil, errmsg
+    end
+
+    local evaler = function(ctx)
+        local newcontext = ctx:copy()
+        local copysequence = newcontext.sequence
+        local sequences = {}
+        local seq, errmsg
+        for i = 1, #efs do
+            local ef = efs[i]
+            newcontext.sequence = copysequence
+            seq, errmsg = ef(newcontext)
+            if errmsg then return nil, errmsg end
+            sequences[i] = seq
+        end
+        newcontext.sequence = copysequence
+        if singleef == nil then return nil, "single ef == nil" end
+
+        local func
+        func = function(vars, seq, ef)
+            if #vars > 0 then
+                local varname = table.remove(vars, 1)
+                local sequence = table.remove(seq, 1)
+
+                for i = 1, #sequence do
+                    local nvars = {}
+                    local nseq = {}
+                    for i = 1, #vars do
+                        nvars[#nvars + 1] = vars[i]
+                        nseq[#nseq + 1] = seq[i]
+                    end
+                    newcontext.vars[varname] = { sequence[i] }
+                    local x = func(nvars, nseq, ef)
+                    if x then
+                        if someEvery == "some" then
+                            if boolean_value(x) then
+                                return { true }
+                            end
+                        else
+                            if not boolean_value(x) then
+                                return { false }
+                            end
+                        end
+                    end
+                end
+            else
+                local x, y = ef(newcontext)
+                return x, y
+            end
+            if "some" then
+                return { false }
+            else
+                return { true }
+            end
+        end
+
+        local z = func(varnames, sequences, singleef)
+        return z, nil
+    end
+    leaveStep(tl, "6 parse_quantified_expr")
     return evaler, nil
 end
 

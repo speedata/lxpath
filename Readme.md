@@ -1,6 +1,6 @@
 ## Pure Lua XPath 2.0 parser
 
-Work in progress. This will be part of the [speedata Publisher](https://github.com/speedata/publisher/) version 5.
+This is part of the [speedata Publisher](https://github.com/speedata/publisher/).
 
 See the test file to get get idea of the amount of XPath functionality that is implemented.
 
@@ -73,7 +73,9 @@ You can provide your own implementations for `string.match` and `string.find` (w
 
 ## Limitations
 
+* Work in progress: union/except/intersect and date functions are currently missing
 * This library is not unicode aware (see above).
+* No schema support.
 * Since Lua does not have “real” regular expressions, the functions that expect regular expressions are not implemented (`matches()`, `replace()`, `tokenize()`). You should provide your own implementations of these functions.
 
 You can override the XPath functions.
@@ -108,6 +110,7 @@ Each element (a table) has zero or more children, either a string or another ele
 ```lua
 {
     [".__name"] = "elementname",
+    [".__id"]  = 1,  -- in document order
     [".__type"] = "element",
     [".__local_name"] = "elementname",
     [".__namespace"] = "",
@@ -147,6 +150,7 @@ tbl = {
     {
         [1] = {
             [".__name"] = "data",
+            [".__id"]  = 1,
             [".__type"] = "element",
             [".__local_name"] = "data",
             [".__namespace"] = "",
@@ -155,6 +159,7 @@ tbl = {
             [1] = "\n    ",
             [2] = {
                 [".__name"] = "child",
+                [".__id"]  = 2,
                 [".__type"] = "element",
                 [".__local_name"] = "child",
                 [".__namespace"] = "",
