@@ -372,11 +372,12 @@ local function is_document(itm)
     return type(itm) == "table" and itm[".__type"] == "document"
 end
 
-M.is_element = is_element
-
 local function is_attribute(itm)
     return type(itm) == "table" and itm[".__type"] == "attribute"
 end
+
+M.is_element = is_element
+M.is_attribute = is_attribute
 
 local function number_value(sequence)
     if type(sequence) == "string" then return tonumber(sequence) end
@@ -927,6 +928,7 @@ local function callFunction(fname, seq, ctx)
         fname = fn[2]
     end
     local func = getFunction(namespace, fname)
+    if not func then return {}, string.format("cannot find function with name %s",fname) end
     local minarg, maxarg = func[4], func[5]
 
     if #seq < minarg or (maxarg ~= -1 and #seq > maxarg) then
