@@ -747,6 +747,12 @@ local function fnRoot(ctx, seq)
     if #seq ~= 0 then
         return nil, "not yet implmented: root(arg)"
     end
+    if not ctx.xmldoc then
+        return nil, "no root found"
+    end
+    if not ctx.xmldoc[1] then
+        return nil, "no root found"
+    end
     for i = 1, #ctx.xmldoc[1] do
         local tab = ctx.xmldoc[1][i]
         if is_element(tab) then
@@ -1712,7 +1718,8 @@ function parse_or_expr(tl)
     local evaler = function(ctx)
         local seq, errmsg
         for _, ef in ipairs(efs) do
-            seq, errmsg = ef(ctx)
+            local newcontext = ctx:copy()
+            seq, errmsg = ef(newcontext)
             if errmsg ~= nil then
                 return nil, errmsg
             end
@@ -1760,7 +1767,8 @@ function parse_and_expr(tl)
         local ef, msg, ok, seq
         for i = 1, #efs do
             ef = efs[i]
-            seq, msg = ef(ctx)
+            local newcontext = ctx:copy()
+            seq, msg = ef(newcontext)
             if msg then return nil, msg end
             ok, msg = boolean_value(seq)
             if msg then return nil, msg end
@@ -2259,9 +2267,9 @@ function parse_relative_path_expr(tl)
             local copysequence = ctx.sequence
             local ef = efs[i]
             ctx.size = #copysequence
-            for i, itm in ipairs(copysequence) do
+            for j, itm in ipairs(copysequence) do
                 ctx.sequence = { itm }
-                ctx.pos = i
+                ctx.pos = j
                 local seq, errmsg = ef(ctx)
                 if errmsg then
                     return nil, errmsg
@@ -2803,7 +2811,8 @@ function parse_function_call(tl)
         -- TODO: save context and restore afterwards
         local seq, errmsg
         for _, ef in ipairs(efs) do
-            seq, errmsg = ef(ctx)
+            local newctx = ctx:copy()
+            seq, errmsg = ef(newctx)
             if errmsg ~= nil then return nil, errmsg end
             arguments[#arguments + 1] = seq
         end
