@@ -88,6 +88,8 @@ function TestTokenizer:test_parse_simple()
         { "'abc' = 'abc'",                                                       { true } },
         { "'aA' < 'aa'",                                                         { true } },
         { "'aA' != 'aa'",                                                        { true } },
+        { "true() = true()",                                                     { true } },
+        { "false() = true()",                                                    { false } },
         { "false() or true()",                                                   { true } },
         { "true() and false()",                                                  { false } },
         { "/root/(concat(@foo,@one)) ",                                          { "no1" } },
