@@ -668,6 +668,28 @@ local function fnLowerCase(ctx, seq)
     return { string.lower(x) }, nil
 end
 
+local function fnNamespaceURI(ctx, seq)
+    local input_seq = ctx.sequence
+    if #seq == 1 then
+        input_seq = seq[1]
+    end
+    -- first item
+    seq = input_seq
+    if #seq == 0 then
+        return { "" }, nil
+    end
+    if #seq > 1 then
+        return {}, "sequence too long"
+    end
+    -- first element
+    seq = seq[1]
+
+    if is_element(seq) then
+        return { seq[".__namespace"] }, nil
+    end
+
+    return { "" }, nil
+end
 
 local function fnMax(ctx, seq)
     local firstarg = seq[1]
@@ -910,6 +932,7 @@ local funcs = {
     { "last",                 M.fnNS, fnLast,               0, 0 },
     { "local-name",           M.fnNS, fnLocalName,          0, 1 },
     { "lower-case",           M.fnNS, fnLowerCase,          1, 1 },
+    { "namespace-uri",        M.fnNS, fnNamespaceURI,       0, 1 },
     { "max",                  M.fnNS, fnMax,                1, 1 },
     { "matches",              M.fnNS, fnMatches,            2, 3 },
     { "min",                  M.fnNS, fnMin,                1, 1 },
@@ -964,9 +987,9 @@ local function callFunction(fname, seq, ctx)
 
     if #seq < minarg or (maxarg ~= -1 and #seq > maxarg) then
         if minarg == maxarg then
-            return {}, string.format("function %s requires %d arguments, %d supplied", func[1], minarg, #seq)
+            return {}, string.format("function %s() requires %d arguments, %d supplied", table.concat(fn,':'), minarg, #seq)
         else
-            return {}, string.format("function %s requires %d to %d arguments, %d supplied", func[1], minarg, maxarg,
+            return {}, string.format("function %s() requires %d to %d arguments, %d supplied", table.concat(fn,':'), minarg, maxarg,
                 #seq)
         end
     end
@@ -2456,6 +2479,9 @@ function parse_forward_step(tl)
     end
     local evaler = function(ctx)
         if not tf then return nil, nil end
+        if not ctx.xmldoc then
+            return nil, "XML not set, aborting"
+        end
         if stepAxis == axisSelf then
             -- do nothing
         elseif stepAxis == axisChild then
