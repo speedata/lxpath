@@ -95,6 +95,8 @@ function TestTokenizer:test_parse_simple()
         { "/root/(concat(@foo,@one)) ",                                          { "no1" } },
         { "/root/@foo = 'no' and /root/@one!='2'",                               { true } },
         { "/root/@one >= 1 and /root/@one <2 1",                                 { true } },
+        { "if (/root/@one) then string(/root/@one) else ''",                     { "1" } },
+        { "if (/root/@doesnotexist) then string(/root/@doesnotexist) else ''",   { "" } },
         { "false()",                                                             { false } },
         { "-3.5",                                                                { -3.5 } },
         { "5 + 4",                                                               { 9.0 } },
