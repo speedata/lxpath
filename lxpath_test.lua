@@ -150,6 +150,7 @@ function TestTokenizer:test_parse_simple()
         { "boolean( (()) )",                                                     { false } },
         { "boolean( 'false' )",                                                  { true } },
         { "boolean(/root)",                                                      { true } },
+        { "boolean(/root/sub)",                                                  { true } },
         { "count(/root/sub)",                                                    { 3.0 } },
         { "contains( '', '' )",                                                  { true } },
         { "contains( (), 'a' )",                                                 { false } },
