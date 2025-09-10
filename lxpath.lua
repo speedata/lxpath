@@ -414,6 +414,12 @@ local function number_value(sequence)
     if type(sequence) == "number" then
         return sequence
     end
+
+    -- NEW: pass through single numeric item in a sequence
+    if type(sequence) == "table" and #sequence == 1 and type(sequence[1]) == "number" then
+        return sequence[1]
+    end
+
     if not sequence then
         return nil, "empty sequence"
     end
@@ -423,6 +429,7 @@ local function number_value(sequence)
     if #sequence > 1 then
         return nil, "number value, # must be 1"
     end
+
     if is_attribute(sequence[1]) then
         return tonumber(sequence[1].value)
     end
@@ -657,6 +664,233 @@ local function fnFloor(ctx, seq)
     return { math.floor(n) }, nil
 end
 
+-- Implementation of XPath 2.0 fn:format-number($value, $picture)
+-- Supports:
+--   - Digit placeholders: '0' (mandatory), '#' (optional)
+--   - Decimal separator '.'
+--   - Grouping separator ',' (primary grouping only, e.g. ###,##0)
+--   - Percent '%' (×100) and per-mille '‰' (×1000)
+--   - Positive/negative sub-patterns (separated by ';')
+--   - NaN and Infinity cases
+local function fnFormatNumber(ctx, seq)
+    --------------------------------------------------------------------------
+    -- Helper functions
+    --------------------------------------------------------------------------
+    local function split_once(s, sep)
+        -- Split string at first occurrence of sep
+        local a, b = string.find(s, sep, 1, true)
+        if not a then return s, nil end
+        return string.sub(s, 1, a - 1), string.sub(s, b + 1)
+    end
+
+    local function count_chars(s, chars)
+        -- Count occurrences of characters from 'chars' in string s
+        local n = 0
+        for i = 1, #s do
+            local c = s:sub(i,i)
+            if chars[c] then n = n + 1 end
+        end
+        return n
+    end
+
+    local function round_to(n, frac)
+        -- Round number n to 'frac' fractional digits
+        if not n then return n end
+        if frac <= 0 then return math.floor(n + (n>=0 and 0.5 or -0.5)) end
+        local m = 10^frac
+        return math.floor(n*m + (n>=0 and 0.5 or -0.5)) / m
+    end
+
+    local function is_infinite(x)
+        return x == math.huge or x == -math.huge
+    end
+
+    --------------------------------------------------------------------------
+    -- Extract arguments
+    --------------------------------------------------------------------------
+    local n, errmsg = M.number_value(seq[1])
+    -- Only treat errors other than "empty sequence" as fatal
+    if errmsg and errmsg ~= "empty sequence" then
+        return nil, errmsg
+    end
+    local picture = M.string_value(seq[2])
+
+    -- Empty sequence -> NaN (as per XPath)
+    if n == nil then
+        return { "NaN" }, nil
+    end
+
+    -- Handle NaN/Infinity
+    if n ~= n then return { "NaN" }, nil end
+    if is_infinite(n) then
+        return { (n < 0 and "-Infinity" or "Infinity") }, nil
+    end
+
+    --------------------------------------------------------------------------
+    -- Parse picture string into positive and negative sub-patterns
+    --------------------------------------------------------------------------
+    local posPattern, negPattern = split_once(picture, ";")
+    posPattern = posPattern or picture
+
+    local function parse_pattern(pat)
+        -- Detect scale factor for % and ‰
+        local scale = 1
+        if pat:find("%", 1, true) then
+            scale = 100
+        end
+        if pat:find("‰", 1, true) then
+            scale = 1000
+        end
+        -- Find first/last digit placeholder
+        local firstIdx, lastIdx
+        for i = 1, #pat do
+            local c = pat:sub(i,i)
+            if c == '0' or c == '#' then
+                firstIdx = i; break
+            end
+        end
+        for i = #pat, 1, -1 do
+            local c = pat:sub(i,i)
+            if c == '0' or c == '#' then
+                lastIdx = i; break
+            end
+        end
+        if not firstIdx then
+            -- No digit placeholders: return whole pattern as literal
+            return {
+                prefix = pat, suffix = "",
+                intPat = "", fracPat = "", groupSize = 0, scale = scale
+            }
+        end
+
+        local prefix = pat:sub(1, firstIdx-1)
+        local core   = pat:sub(firstIdx, lastIdx)
+        local suffix = pat:sub(lastIdx+1)
+
+        -- Split integer / fractional part
+        local dotPos = core:find("%.", 1, false)
+        local intPat, fracPat = core, ""
+        if dotPos then
+            intPat  = core:sub(1, dotPos-1)
+            fracPat = core:sub(dotPos+1)
+        end
+
+        -- Determine grouping size (distance between last comma and end)
+        local lastComma = intPat:match(".*(),")
+        local groupSize = 0
+        if lastComma then
+            local tail = intPat:sub(lastComma+1):gsub("[^0#]", "")
+            groupSize = #tail
+            if groupSize == 0 then groupSize = 3 end -- fallback default
+        end
+
+        -- Count mandatory/optional digits
+        local minInt  = count_chars(intPat, { ['0']=true })
+        local minFrac = count_chars(fracPat, { ['0']=true })
+        local maxFrac = minFrac + count_chars(fracPat, { ['#']=true })
+
+        return {
+            prefix=prefix, suffix=suffix,
+            intPat=intPat, fracPat=fracPat,
+            minInt=minInt, minFrac=minFrac, maxFrac=maxFrac,
+            groupSize=groupSize, scale=scale
+        }
+    end
+
+    --------------------------------------------------------------------------
+    -- Format number according to parsed pattern
+    --------------------------------------------------------------------------
+    local function format_with_pattern(value, P)
+        value = (value or 0) * (P.scale or 1)
+
+        -- Round to maximum fractional digits
+        local rounded = round_to(value, P.maxFrac or 0)
+
+        -- Extract integer / fractional parts
+        local sign = ""
+        if rounded < 0 then sign = "-" end
+        local absval = math.abs(rounded)
+
+        local intPart  = math.floor(absval)
+        local fracPart = absval - intPart
+
+        -- Convert integer part to string
+        local intStr = tostring(intPart)
+
+        -- Pad with zeros if necessary
+        if #intStr < (P.minInt or 0) then
+            intStr = string.rep("0", P.minInt - #intStr) .. intStr
+        end
+
+        -- Apply grouping separator
+        if P.groupSize and P.groupSize > 0 then
+            local out = {}
+            local cnt = 0
+            for i = #intStr, 1, -1 do
+                out[#out+1] = intStr:sub(i,i)
+                cnt = cnt + 1
+                if cnt == P.groupSize and i > 1 then
+                    out[#out+1] = ","
+                    cnt = 0
+                end
+            end
+            local rev = {}
+            for i = #out, 1, -1 do rev[#rev+1] = out[i] end
+            intStr = table.concat(rev)
+        end
+
+        -- Fractional part
+        local fracStr = ""
+        local maxF = P.maxFrac or 0
+        if maxF > 0 then
+            local f = round_to(fracPart, maxF)
+
+            -- Handle rounding overflow (e.g. 0.999 -> 1.000)
+            if f >= 1 then
+                intStr = tostring(tonumber(intStr:gsub(",", "")) + 1)
+                f = f - 1
+            end
+
+            local fracNum = math.floor(f * (10^maxF) + 0.5)
+            fracStr = tostring(fracNum)
+            if #fracStr < maxF then
+                fracStr = string.rep("0", maxF - #fracStr) .. fracStr
+            end
+
+            -- Trim optional trailing zeros (# placeholders), but keep minFrac
+            if maxF > (P.minFrac or 0) then
+                local keep = math.max(P.minFrac or 0, 0)
+                fracStr = fracStr:gsub("0+$", function(z)
+                    local drop = math.min(#z, #fracStr - keep)
+                    return string.rep("0", #z - drop)
+                end)
+            end
+        end
+
+        local dot = (#fracStr > 0) and "." or ""
+
+        return sign .. P.prefix .. intStr .. dot .. fracStr .. P.suffix
+    end
+
+    --------------------------------------------------------------------------
+    -- Format positive or negative number
+    --------------------------------------------------------------------------
+    if n < 0 then
+        if negPattern and #negPattern > 0 then
+            local Pneg = parse_pattern(negPattern)
+            return { format_with_pattern(-n, Pneg) }, nil   -- <-- abs value!
+        else
+            local Ppos = parse_pattern(posPattern)
+            local s = format_with_pattern(-math.abs(n), Ppos)
+            return { "-" .. s }, nil
+        end
+    else
+        local Ppos = parse_pattern(posPattern)
+        return { format_with_pattern(n, Ppos) }, nil
+    end
+end
+
+
 local function fnLast(ctx, seq)
     return { ctx.size }, nil
 end
@@ -841,6 +1075,7 @@ local function fnRound(ctx, seq)
     if errmsg then
         return nil, errmsg
     end
+    if not n then return { nan }, nil end
     return { math.floor(n + 0.5) }, nil
 end
 
@@ -975,6 +1210,7 @@ local funcs = {
     { "empty",                M.fnNS, fnEmpty,              1, 1 },
     { "false",                M.fnNS, fnFalse,              0, 0 },
     { "floor",                M.fnNS, fnFloor,              1, 1 },
+    { "format-number",        M.fnNS, fnFormatNumber,       2, 2 },
     { "last",                 M.fnNS, fnLast,               0, 0 },
     { "local-name",           M.fnNS, fnLocalName,          0, 1 },
     { "lower-case",           M.fnNS, fnLowerCase,          1, 1 },
@@ -2049,7 +2285,18 @@ function parse_multiplicative_expr(tl)
             if operators[i - 1] == "*" then
                 result = result * val
             elseif operators[i - 1] == "div" then
-                result = result / val
+                -- Guard against division by zero with IEEE-like semantics:
+                if val == 0 then
+                    if result == 0 then
+                        -- 0 div 0 => NaN
+                        result = 0/0
+                    else
+                        -- x div 0 => ±Infinity depending on sign of numerator
+                        result = (result > 0) and math.huge or -math.huge
+                    end
+                else
+                    result = result / val
+                end
             elseif operators[i - 1] == "idiv" then
                 local d = result / val
                 local sign = 1
