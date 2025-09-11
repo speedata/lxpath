@@ -683,25 +683,6 @@ local function fnFormatNumber(ctx, seq)
     --------------------------------------------------------------------------
     -- Helpers
     --------------------------------------------------------------------------
-    local function round_half_even(n, frac)
-        if not n then return n end
-        local eps = 1e-12
-        if frac <= 0 then
-            local f = math.floor(n)
-            local d = n - f
-            if d > 0.5 + eps then return f + 1
-            elseif d < 0.5 - eps then return f
-            else return (f % 2 == 0) and f or (f + 1) end
-        end
-        local m = 10 ^ frac
-        local x = n * m
-        local f = math.floor(x)
-        local d = x - f
-        if d > 0.5 + eps then return (f + 1) / m
-        elseif d < 0.5 - eps then return f / m
-        else return ((f % 2) == 0) and (f / m) or ((f + 1) / m) end
-    end
-
     local function is_infinite(x)
         return x == math.huge or x == -math.huge
     end
@@ -1079,6 +1060,42 @@ local function fnString(ctx, seq)
     return { x }, nil
 end
 
+
+function round_half_even(value, precision)
+  if value == nil then
+    return nil
+  end
+  precision = precision or 0
+  local factor = 10 ^ precision
+  local shifted = value * factor
+  local floor_val = math.floor(shifted)
+  local frac = shifted - floor_val
+
+  if frac > 0.5 then
+    return (floor_val + 1) / factor
+  elseif frac < 0.5 then
+    return floor_val / factor
+  else
+    -- genau auf der Hälfte → round half to even
+    if floor_val % 2 == 0 then
+      return floor_val / factor
+    else
+      return (floor_val + 1) / factor
+    end
+  end
+end
+
+local function fnRoundHalfToEven(ctx, seq)
+    firstarg = number_value(seq[1])
+    if not firstarg then return { nan }, nil end
+    local secondarg = 0
+    if #seq > 1 then
+        secondarg = number_value(seq[2]) or 0
+    end
+    local res = round_half_even(firstarg, secondarg)
+    return { res }, nil
+end
+
 local function fnStartsWith(ctx, seq)
     local firstarg = string_value(seq[1])
     local secondarg = string_value(seq[2])
@@ -1215,6 +1232,7 @@ local funcs = {
     { "reverse",              M.fnNS, fnReverse,            1, 1 },
     { "root",                 M.fnNS, fnRoot,               0, 1 },
     { "round",                M.fnNS, fnRound,              1, 1 },
+    { "round-half-to-even",   M.fnNS, fnRoundHalfToEven,    1, 2 },
     { "starts-with",          M.fnNS, fnStartsWith,         2, 2 },
     { "ends-with",            M.fnNS, fnEndsWith,           2, 2 },
     { "substring-after",      M.fnNS, fnSubstringAfter,     2, 2 },
