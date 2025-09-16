@@ -420,11 +420,8 @@ local function number_value(sequence)
         return sequence[1]
     end
 
-    if not sequence then
-        return nil, "empty sequence"
-    end
-    if #sequence == 0 then
-        return nil, "empty sequence"
+    if not sequence or #sequence == 0 then
+        return nan, nil
     end
     if #sequence > 1 then
         return nil, "number value, # must be 1"
@@ -460,6 +457,13 @@ end
 function string_value(seq)
     local ret = {}
     if type(seq) == "string" then return seq end
+    if type(seq) == "number" then
+        if seq ~= seq then
+            return "NaN"
+        else
+            return tostring(seq)
+        end
+    end
     if is_attribute(seq) then return seq.value end
     for _, itm in ipairs(seq) do
         if tonumber(itm) and itm ~= itm then
@@ -631,6 +635,20 @@ local function fnCount(ctx, seq)
     local firstarg = seq[1]
     if not firstarg then return { 0 }, nil end
     return { #firstarg }, nil
+end
+
+local function fnDistinctValues(ctx, seq)
+    local firstarg = seq[1]
+    local seen = {}
+    local ret = {}
+    for _, itm in ipairs(firstarg) do
+        local s = string_value(itm)
+        if not seen[s] then
+            seen[s] = true
+            ret[#ret + 1] = itm
+        end
+    end
+    return ret, nil
 end
 
 local function fnDoc(ctx, seq)
@@ -1212,6 +1230,7 @@ local funcs = {
     { "concat",               M.fnNS, fnConcat,             0, -1 },
     { "contains",             M.fnNS, fnContains,           2, 2 },
     { "count",                M.fnNS, fnCount,              1, 1 },
+    { "distinct-values",      M.fnNS, fnDistinctValues,     1, 1 },
     { "doc",                  M.fnNS, fnDoc,                1, 1 },
     { "empty",                M.fnNS, fnEmpty,              1, 1 },
     { "false",                M.fnNS, fnFalse,              0, 0 },
