@@ -240,6 +240,31 @@ function TestTokenizer:test_parse_simple()
         { [[ ends-with("tatto$o$", "$o$") ]],                                    { true } },
         { [[ substring-after("tattoo", "tat") ]],                                { "too" } },
         { [[ substring-before ( "tattoo", "att") ]],                             { "t" } },
+        { [[ translate("abcd", "bd", "XY") ]],                                   { "aXcY" } },
+        { [[ translate("hello", "hel", "HE") ]],                                 { "HEo" } },
+        { [[ translate("àáâ", "áâ", "") ]],                                      { "à" } },
+        { [[ translate("aba", "ab", "BA") ]],                                    { "BAB" } },
+        { [[ translate("banana", "ana", "x") ]],                                 { "bxxx" } },
+        { [[ translate((), "abc", "ABC") ]],                                     { "" } },
+        { [[ translate("mississippi", "is", "xy") ]],                            { "mxyyxyyxppx" } },
+        { [[ translate("12345", "135", "AB") ]],                                 { "A2B4" } },
+        { [[ translate("xxx", "x", "") ]],                                       { "" } },
+        { [[ translate("emoji 😀😃😄", "😀😄", "xy") ]],                           { "emoji x😃y" } },
+        { [[ translate("abc", "ab", "WXYZ") ]],                                  { "WXc" } },   -- 'to' longer than 'from' -> excess ignored
+        { [[ translate("abc", "abc", "Z") ]],                                    { "Z" } },     -- 'from' longer than 'to' -> b,c removed
+        { [[ translate("abac", "aabc", "XYZ") ]],                                { "XZX" } },   -- duplicate 'a' in 'from' -> 2nd ignored; corresponding 'Y' ignored; 'c' deleted
+        { [[ translate("aba", "aba", "123") ]],                                  { "121" } },   -- duplicate at pos3 ignored (and '3' ignored)
+        { [[ translate("abc", "", "XYZ") ]],                                     { "abc" } },   -- empty 'from' -> unchanged
+        { [[ translate("banana", "an", "") ]],                                   { "b" } },     -- third arg empty -> remove all in 'from'
+        { [[ translate("foo", "xyz", "123") ]],                                  { "foo" } },   -- none of 'from' present
+        { [[ translate("cab", "abc", "xxx") ]],                                  { "xxx" } },   -- many-to-one mapping
+        { [[ translate((), "a", "b") ]],                                         { "" } },      -- arg is empty-sequence -> empty string
+        { [[ translate("", "abc", "XYZ") ]],                                     { "" } },      -- empty input string
+        { [[ translate("ÄÖÜ", "Ä", "a") ]],                                      { "aÖÜ" } },   -- UTF-8: replace only 'Ä'
+        { [[ translate("zz", "z", "XY") ]],                                      { "XX" } },    -- 'to' longer: still map to first position only
+        { [[ translate("xyz", "yz", "Q") ]],                                     { "xQ" } },    -- 'y'->'Q', 'z' removed (|to|=1)
+        { [[ translate(" miss iss ", " ", "") ]],                                { "mississ" } },-- remove spaces
+        { [[ translate("mississippi", "is", "x") ]],                             { "mxxxppx" } },-- 'i'->'x', 's' deleted
         { "count( /root/sub[@foo='bar'] )",                                      { 2 } },
         { "count(/root[@foo = 'no' and @one!=2])",                               { 1} },
         { "count(/root[@foo = 'zzz' or @one!=2])",                               { 1} },
