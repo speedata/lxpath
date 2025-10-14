@@ -437,6 +437,7 @@ local function boolean_value(seq)
     if type(seq) == "boolean" then
         return seq
     end
+    if not seq then return false, nil end
     if #seq == 0 then return false, nil end
     local val = seq[1]
     local ok = false
@@ -655,7 +656,7 @@ local function fnDoc(ctx, seq)
     local firstarg = string_value(seq[1])
     local fn = M.findfile(firstarg)
     local xmltab = M.parse_xml(fn)
-    ctx.sequence = xmltab[1]
+    ctx.sequence = xmltab
     return {ctx.sequence}, nil
 end
 
