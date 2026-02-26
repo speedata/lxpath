@@ -95,6 +95,7 @@ function TestTokenizer:test_parse_simple()
         { "/root/(concat(@foo,@one)) ",                                          { "no1" } },
         { "/root/@foo = 'no' and /root/@one!='2'",                               { true } },
         { "/root/@one >= 1 and /root/@one <= 1",                                 { true } },
+        { "/root/@one + /root/@one",                                             { 2.0 }},
         { "if (/root/@one) then string(/root/@one) else ''",                     { "1" } },
         { "if (/root/@doesnotexist) then string(/root/@doesnotexist) else ''",   { "" } },
         { "false()",                                                             { false } },
@@ -336,6 +337,37 @@ function TestTokenizer:test_parse_simple()
         ---@diagnostic disable-next-line
         local seq = ef(ctx)
 
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test arithmetic and comparison on relative attribute references (@attr1 op @attr2)
+-- where the context sequence is already positioned on an element.
+-- This verifies that evaluating the first operand does not destroy the context
+-- for the second operand (the attribute axis mutates ctx.sequence).
+function TestTokenizer:test_relative_attr_arithmetic()
+    -- root element of xmltab has: one="1", foo="no", empty=""
+    local root = xmltab[1]
+    local testdata = {
+        { "@one + @one",           { 2.0 } },
+        { "@one - @one",           { 0.0 } },
+        { "@one * @one",           { 1.0 } },
+        { "@one div @one",         { 1.0 } },
+        { "@one + @one + @one",    { 3.0 } },
+        { "@one = @one",           { true } },
+        { "@foo != @empty",        { true } },
+    }
+
+    for _, td in ipairs(testdata) do
+        local ctxvalue = {
+            namespaces = { fn = lxpath.fnNS },
+            vars = {},
+            xmldoc = { root },
+            sequence = { root },
+        }
+        local ctx = lxpath.context:new(ctxvalue)
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
         luaunit.assertEquals(seq, td[2], td[1])
     end
 end
