@@ -439,4 +439,163 @@ function TestTokenizer:test_parse_axis()
     end
 end
 
+-- Test string concatenation operator ||
+function TestTokenizer:test_string_concat()
+    local testdata = {
+        { "'hello' || ' ' || 'world'",  { "hello world" } },
+        { "1 || 2",                      { "12" } },
+        { "$foo || 'baz'",               { "barbaz" } },
+        { "'a' || 'b' || 'c' || 'd'",   { "abcd" } },
+        { "'' || ''",                    { "" } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS },
+            vars = { foo = "bar" },
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test tokenizer for new tokens
+function TestTokenizer:test_new_tokens()
+    local testdata = {
+        { "||",  { { "||", "tokOperator" } } },
+        { "|",   { { "|", "tokOperator" } } },
+        { "{}",  { { "{", "tokOpenCurly" }, { "}", "tokCloseCurly" } } },
+        { "[]",  { { "[", "tokOpenBracket" }, { "]", "tokCloseBracket" } } },
+    }
+    for _, tc in ipairs(testdata) do
+        luaunit.assertEquals(lxpath.string_to_tokenlist(tc[1]), tc[2])
+    end
+end
+
+-- Test arrays
+function TestTokenizer:test_arrays()
+    local testdata = {
+        -- Square bracket constructor
+        { "[]",                          { lxpath.make_array({}) } },
+        { "[1, 2, 3]",                   { lxpath.make_array({{1},{2},{3}}) } },
+        { "['a', 'b']",                  { lxpath.make_array({{"a"},{"b"}}) } },
+        -- Curly array constructor
+        { "array {}",                    { lxpath.make_array({}) } },
+        { "array { 1 to 3 }",           { lxpath.make_array({{1},{2},{3}}) } },
+        -- Lookup
+        { "[10, 20, 30]?2",             { 20 } },
+        { "[10, 20, 30]?1",             { 10 } },
+        { "['a', 'b', 'c']?3",          { "c" } },
+        -- Wildcard lookup
+        { "[10, 20, 30]?*",             { 10, 20, 30 } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, array = lxpath.arrayNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test maps
+function TestTokenizer:test_maps()
+    local testdata = {
+        -- Empty map
+        { "map {}",                      { lxpath.make_map({}) } },
+        -- Lookup by name
+        { "map { 'a': 1, 'b': 2 }?a",   { 1 } },
+        { "map { 'x': 'hello' }?x",     { "hello" } },
+        -- Wildcard lookup
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, map = lxpath.mapNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test array and map with variables
+function TestTokenizer:test_array_map_variables()
+    local myarr = lxpath.make_array({{10},{20},{30}})
+    local mymap = lxpath.make_map({a = {1}, b = {2}})
+    local testdata = {
+        { "$arr?1",                      { 10 } },
+        { "$arr?3",                      { 30 } },
+        { "$map?a",                      { 1 } },
+        { "$map?b",                      { 2 } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, array = lxpath.arrayNS, map = lxpath.mapNS },
+            vars = { arr = myarr, map = mymap },
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test array functions
+function TestTokenizer:test_array_functions()
+    local testdata = {
+        { "array:size([1, 2, 3])",                 { 3.0 } },
+        { "array:size([])",                         { 0.0 } },
+        { "array:get([10, 20, 30], 2)",            { 20 } },
+        { "array:append([1, 2], 3)?3",             { 3 } },
+        { "array:size(array:remove([1, 2, 3], 2))", { 2.0 } },
+        { "array:flatten([1, [2, 3]])",            { 1, 2, 3 } },
+        { "array:subarray([1, 2, 3, 4], 2, 2)",   { lxpath.make_array({{2},{3}}) } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, array = lxpath.arrayNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Test map functions
+function TestTokenizer:test_map_functions()
+    local testdata = {
+        { "map:size(map { 'a': 1, 'b': 2 })",        { 2.0 } },
+        { "map:size(map {})",                          { 0.0 } },
+        { "map:get(map { 'x': 42 }, 'x')",            { 42 } },
+        { "map:contains(map { 'a': 1 }, 'a')",        { true } },
+        { "map:contains(map { 'a': 1 }, 'b')",        { false } },
+        { "map:size(map:put(map { 'a': 1 }, 'b', 2))", { 2.0 } },
+        { "map:size(map:remove(map { 'a': 1, 'b': 2 }, 'a'))", { 1.0 } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, map = lxpath.mapNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
 os.exit(luaunit.LuaUnit.run())
