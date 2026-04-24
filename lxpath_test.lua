@@ -397,6 +397,9 @@ function TestTokenizer:test_parse_axis()
         { [[ /root/sub[3]/preceding-sibling::element()/string(@foo)]],       { "baz", "bar" } },
         { [[ /root/other[1]/preceding::element()/string() ]],                { "123", "sub2", "contents sub3subsub", "subsub" } },
         { [[ /root//subsub[1]/../@self = "sub3" ]],                          { true } },
+        { [[ serialize(/root/sub[1]) ]],                                       { '<sub foo="baz" someattr="somevalue">123</sub>' } },
+        { [[ serialize(/root/sub[2]) ]],                                       { '<sub attr="baz" foo="bar">sub2</sub>' } },
+        { [[ serialize(/root/x) ]],                                            { "<x><y>1</y></x>" } },
     }
 
     for _, td in ipairs(testdata) do
