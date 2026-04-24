@@ -1534,7 +1534,7 @@ local function filter(ctx, f)
                     ctx.sequence = {}
                     return {}, nil
                 end
-                if idx == i then
+                if idx == ctx.pos then
                     ctx.sequence = { itm }
                     return { itm }, nil
                 end
@@ -1868,15 +1868,14 @@ function context:precedingSiblingAxis(testfunc)
         if is_element(elt) then
             local curid = elt[".__id"]
             local parent = elt[".__parent"]
-            local startCollecting = true
             for i = 1, #parent do
                 local sibling = parent[i]
                 if is_element(sibling) then
                     if sibling[".__id"] >= curid then
-                        startCollecting = false
+                        break
                     end
                 end
-                if startCollecting and testfunc(self,sibling) then
+                if testfunc(self, sibling) then
                     seq[#seq + 1] = sibling
                 end
             end
@@ -2729,7 +2728,11 @@ function parse_relative_path_expr(tl)
             for j, itm in ipairs(copysequence) do
                 ctx.sequence = { itm }
                 ctx.pos = j
+                local saved_pos = ctx.pos
+                local saved_size = ctx.size
                 local seq, errmsg = ef(ctx)
+                ctx.pos = saved_pos
+                ctx.size = saved_size
                 if errmsg then
                     return nil, errmsg
                 end
@@ -2933,11 +2936,18 @@ function parse_forward_step(tl)
         local ret = {}
         ctx.positions = {}
         ctx.lengths = {}
+        local reverseAxis = stepAxis == axisParent or stepAxis == axisAncestor or stepAxis == axisAncestorOrSelf or stepAxis == axisPrecedingSibling or stepAxis == axisPreceding
         local c = 1
         for _, itm in ipairs(ctx.sequence) do
             ctx.positions[#ctx.positions + 1] = c
             c = c + 1
             ret[#ret + 1] = itm
+        end
+        if reverseAxis then
+            local n = #ret
+            for i = 1, n do
+                ctx.positions[i] = n - i + 1
+            end
         end
         for i = 1, #ret do
             ctx.lengths[#ctx.lengths + 1] = #ret

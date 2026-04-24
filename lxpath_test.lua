@@ -395,6 +395,7 @@ function TestTokenizer:test_parse_axis()
         { [[ /root/sub[3]/subsub/ancestor::element()/local-name()  ]],       { "root", "sub" } },
         { [[ /root/sub[3]/subsub/ancestor-or-self::element()/local-name()]], { "root", "sub", "subsub" } },
         { [[ /root/sub[3]/preceding-sibling::element()/string(@foo)]],       { "baz", "bar" } },
+        { [[ /root/sub[3]/preceding-sibling::element()[1]/string(@foo)]],    { "bar" } },
         { [[ /root/other[1]/preceding::element()/string() ]],                { "123", "sub2", "contents sub3subsub", "subsub" } },
         { [[ /root//subsub[1]/../@self = "sub3" ]],                          { true } },
         { [[ serialize(/root/sub[1]) ]],                                       { '<sub foo="baz" someattr="somevalue">123</sub>' } },
