@@ -598,4 +598,228 @@ function TestTokenizer:test_map_functions()
     end
 end
 
+-- XML Parser tests
+local xmlparser = require("xmlparser")
+
+TestXMLParser = {}
+
+function TestXMLParser:test_simple_element()
+    local doc = xmlparser.parse("<root/>")
+    luaunit.assertEquals(doc[".__type"], "document")
+    luaunit.assertEquals(doc[1][".__type"], "element")
+    luaunit.assertEquals(doc[1][".__name"], "root")
+    luaunit.assertEquals(doc[1][".__local_name"], "root")
+    luaunit.assertEquals(doc[1][".__namespace"], "")
+    luaunit.assertEquals(doc[1][".__id"], 1)
+end
+
+function TestXMLParser:test_attributes()
+    local doc = xmlparser.parse('<root foo="bar" baz="123"/>')
+    luaunit.assertEquals(doc[1][".__attributes"]["foo"], "bar")
+    luaunit.assertEquals(doc[1][".__attributes"]["baz"], "123")
+end
+
+function TestXMLParser:test_text_content()
+    local doc = xmlparser.parse("<root>hello world</root>")
+    luaunit.assertEquals(doc[1][1], "hello world")
+end
+
+function TestXMLParser:test_nested_elements()
+    local doc = xmlparser.parse("<root><child>text</child></root>")
+    luaunit.assertEquals(doc[1][1][".__name"], "child")
+    luaunit.assertEquals(doc[1][1][1], "text")
+    luaunit.assertEquals(doc[1][1][".__id"], 2)
+end
+
+function TestXMLParser:test_mixed_content()
+    local doc = xmlparser.parse("<root>before<child/>after</root>")
+    luaunit.assertEquals(doc[1][1], "before")
+    luaunit.assertEquals(doc[1][2][".__name"], "child")
+    luaunit.assertEquals(doc[1][3], "after")
+end
+
+function TestXMLParser:test_entities()
+    local doc = xmlparser.parse("<root>&amp;&lt;&gt;&quot;&apos;</root>")
+    luaunit.assertEquals(doc[1][1], [[&<>"']])
+end
+
+function TestXMLParser:test_numeric_entities()
+    local doc = xmlparser.parse("<root>&#65;&#x42;</root>")
+    luaunit.assertEquals(doc[1][1], "AB")
+end
+
+function TestXMLParser:test_cdata()
+    local doc = xmlparser.parse("<root><![CDATA[<not>xml</not>]]></root>")
+    luaunit.assertEquals(doc[1][1], "<not>xml</not>")
+end
+
+function TestXMLParser:test_cdata_merge_text()
+    local doc = xmlparser.parse("<root>before<![CDATA[ middle ]]>after</root>")
+    luaunit.assertEquals(doc[1][1], "before middle after")
+end
+
+function TestXMLParser:test_comments_skipped()
+    local doc = xmlparser.parse("<root><!-- comment -->text</root>")
+    luaunit.assertEquals(doc[1][1], "text")
+end
+
+function TestXMLParser:test_pi_skipped()
+    local doc = xmlparser.parse("<?xml version='1.0'?><root><?pi data?></root>")
+    luaunit.assertNil(doc[1][1])
+end
+
+function TestXMLParser:test_self_closing()
+    local doc = xmlparser.parse('<root><br/><hr /></root>')
+    luaunit.assertEquals(doc[1][1][".__name"], "br")
+    luaunit.assertEquals(doc[1][2][".__name"], "hr")
+end
+
+function TestXMLParser:test_default_namespace()
+    local doc = xmlparser.parse('<root xmlns="http://example.com"><child/></root>')
+    luaunit.assertEquals(doc[1][".__namespace"], "http://example.com")
+    luaunit.assertEquals(doc[1][1][".__namespace"], "http://example.com")
+end
+
+function TestXMLParser:test_prefixed_namespace()
+    local doc = xmlparser.parse('<ns:root xmlns:ns="http://example.com"><ns:child/></ns:root>')
+    luaunit.assertEquals(doc[1][".__name"], "ns:root")
+    luaunit.assertEquals(doc[1][".__local_name"], "root")
+    luaunit.assertEquals(doc[1][".__namespace"], "http://example.com")
+    luaunit.assertEquals(doc[1][".__ns"]["ns"], "http://example.com")
+    luaunit.assertEquals(doc[1][1][".__namespace"], "http://example.com")
+end
+
+function TestXMLParser:test_parent_links()
+    local doc = xmlparser.parse("<root><child><sub/></child></root>")
+    luaunit.assertEquals(doc[1][".__parent"], doc)
+    luaunit.assertEquals(doc[1][1][".__parent"], doc[1])
+    luaunit.assertEquals(doc[1][1][1][".__parent"], doc[1][1])
+end
+
+function TestXMLParser:test_document_order_ids()
+    local doc = xmlparser.parse("<root><a/><b><c/></b></root>")
+    luaunit.assertEquals(doc[1][".__id"], 1)
+    luaunit.assertEquals(doc[1][1][".__id"], 2)
+    luaunit.assertEquals(doc[1][2][".__id"], 3)
+    luaunit.assertEquals(doc[1][2][1][".__id"], 4)
+end
+
+function TestXMLParser:test_quoted_attributes()
+    local doc = xmlparser.parse([[<root a='"text"' b="it's"/>]])
+    luaunit.assertEquals(doc[1][".__attributes"]["a"], '"text"')
+    luaunit.assertEquals(doc[1][".__attributes"]["b"], "it's")
+end
+
+function TestXMLParser:test_whitespace_in_tags()
+    local doc = xmlparser.parse('<root  foo = "bar"  ><child  /></root >')
+    luaunit.assertEquals(doc[1][".__attributes"]["foo"], "bar")
+    luaunit.assertEquals(doc[1][1][".__name"], "child")
+end
+
+function TestXMLParser:test_entity_in_attribute()
+    local doc = xmlparser.parse('<root val="a&amp;b"/>')
+    luaunit.assertEquals(doc[1][".__attributes"]["val"], "a&b")
+end
+
+function TestXMLParser:test_mismatched_tag_error()
+    luaunit.assertErrorMsgContains("mismatched closing tag", function()
+        xmlparser.parse("<root><child></wrong></root>")
+    end)
+end
+
+-- Edge cases
+
+function TestXMLParser:test_umlauts_in_names()
+    local doc = xmlparser.parse('<Bücher><Ärger attribut="schön">Öl</Ärger></Bücher>')
+    luaunit.assertEquals(doc[1][".__name"], "Bücher")
+    luaunit.assertEquals(doc[1][1][".__name"], "Ärger")
+    luaunit.assertEquals(doc[1][1][".__attributes"]["attribut"], "schön")
+    luaunit.assertEquals(doc[1][1][1], "Öl")
+end
+
+function TestXMLParser:test_empty_document_element()
+    local doc = xmlparser.parse("<r></r>")
+    luaunit.assertEquals(doc[1][".__name"], "r")
+    luaunit.assertNil(doc[1][1])
+end
+
+function TestXMLParser:test_deeply_nested()
+    local doc = xmlparser.parse("<a><b><c><d><e>deep</e></d></c></b></a>")
+    luaunit.assertEquals(doc[1][1][1][1][1][1], "deep")
+    luaunit.assertEquals(doc[1][1][1][1][1][".__id"], 5)
+end
+
+function TestXMLParser:test_multiple_namespaces()
+    local xml = '<root xmlns:a="http://a.example" xmlns:b="http://b.example"><a:x/><b:y/></root>'
+    local doc = xmlparser.parse(xml)
+    luaunit.assertEquals(doc[1][1][".__namespace"], "http://a.example")
+    luaunit.assertEquals(doc[1][1][".__local_name"], "x")
+    luaunit.assertEquals(doc[1][2][".__namespace"], "http://b.example")
+    luaunit.assertEquals(doc[1][2][".__local_name"], "y")
+end
+
+function TestXMLParser:test_namespace_override()
+    local xml = '<root xmlns="http://outer"><child xmlns="http://inner"><sub/></child><sibling/></root>'
+    local doc = xmlparser.parse(xml)
+    luaunit.assertEquals(doc[1][".__namespace"], "http://outer")
+    luaunit.assertEquals(doc[1][1][".__namespace"], "http://inner")
+    luaunit.assertEquals(doc[1][1][1][".__namespace"], "http://inner")
+    luaunit.assertEquals(doc[1][2][".__namespace"], "http://outer")
+end
+
+function TestXMLParser:test_doctype_skipped()
+    local xml = '<?xml version="1.0"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><root/>'
+    local doc = xmlparser.parse(xml)
+    luaunit.assertEquals(doc[1][".__name"], "root")
+end
+
+-- Integration: parse the same XML as xmltable.lua and run an xpath on it
+function TestXMLParser:test_integration_with_lxpath()
+    local xml = [=[<root empty="" quotationmarks='"text"' one="1" foo="no">
+<sub foo="baz" someattr="somevalue">123</sub>
+<sub foo="bar" attr="baz">sub2</sub>
+<sub foo="bar" self="sub3">contents sub3<subsub foo="bar">subsub</subsub></sub>
+<other foo="barbaz">
+  <subsub foo="oof">contents subsub other</subsub>
+</other>
+<other foo="other2">
+  <subsub foo="oof">contents subsub other2</subsub>
+</other>
+<x><y>1</y></x>
+<a>
+<sub p="a1/1"></sub>
+<sub p="a1/2"></sub>
+</a>
+<a>
+<sub  p="a2/1"></sub>
+<sub  p="a2/2"></sub>
+</a>
+</root>]=]
+
+    local doc = xmlparser.parse(xml)
+    local ctx = lxpath.context:new({
+        namespaces = { fn = lxpath.fnNS },
+        vars = {},
+        xmldoc = { doc },
+        sequence = { doc },
+    })
+
+    -- Simple expressions that should work on the parsed document
+    local seq, msg = ctx:eval("/root/sub[1]")
+    luaunit.assertIsNil(msg)
+    luaunit.assertEquals(seq[1][".__attributes"]["foo"], "baz")
+
+    seq, msg = ctx:eval("string(/root/sub[2])")
+    luaunit.assertIsNil(msg)
+    luaunit.assertEquals(seq[1], "sub2")
+
+    seq, msg = ctx:eval("count(/root/sub)")
+    luaunit.assertIsNil(msg)
+    luaunit.assertEquals(seq[1], 3)
+
+    seq, msg = ctx:eval("/root/other/subsub")
+    luaunit.assertIsNil(msg)
+    luaunit.assertEquals(#seq, 2)
+end
+
 os.exit(luaunit.LuaUnit.run())

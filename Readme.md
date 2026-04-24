@@ -1,12 +1,60 @@
 # lxpath — Pure Lua XPath Parser and Evaluator
 
-A pure Lua XPath parser and evaluator supporting XPath 2.0 with selected XPath 3.1 features (arrays, maps, string concatenation). No external dependencies — all utility libraries are vendored. Part of the [speedata Publisher](https://github.com/speedata/publisher/).
+A pure Lua XPath parser and evaluator supporting XPath 2.0 with selected XPath 3.1 features (arrays, maps, string concatenation). Includes a built-in XML parser — no external dependencies. Part of the [speedata Publisher](https://github.com/speedata/publisher/).
+
+## Quick Start
+
+```lua
+local lxpath = require("lxpath")
+local xmlparser = require("xmlparser")
+
+-- Parse XML into the table structure lxpath expects
+local doc = xmlparser.parse([[
+<catalog>
+    <book id="1"><title>Lua Programming</title></book>
+    <book id="2"><title>XPath Essentials</title></book>
+</catalog>
+]])
+
+-- Create a context and evaluate XPath expressions
+local ctx = lxpath.context:new({
+    xmldoc = { doc },
+    sequence = { doc },
+})
+
+local seq = ctx:eval("//book[@id='2']/title")
+print(seq[1][1]) --> "XPath Essentials"
+```
 
 ## Using the library
 
+### Parsing XML
+
+The included `xmlparser` module parses well-formed XML into the Lua table structure that lxpath expects:
+
 ```lua
--- create a context with variables, namespaces and an XML document
-local ctxvalue = {
+local xmlparser = require("xmlparser")
+local doc = xmlparser.parse(xml_string)
+```
+
+The parser supports:
+- Elements, attributes, text nodes, self-closing tags
+- Namespaces (default and prefixed, with proper scoping)
+- CDATA sections (merged into adjacent text nodes)
+- Entity references (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`) and numeric character references (`&#123;`, `&#x7B;`)
+- UTF-8 element and attribute names (e.g. `<Bücher>`)
+- XML declarations, comments, processing instructions, DOCTYPE (all skipped)
+
+Not supported: DTD validation, external entities.
+
+You can also construct the table structure manually or supply it from another source — see [XML Representation](#xml-representation) below.
+
+### Evaluating XPath
+
+```lua
+local lxpath = require("lxpath")
+
+local ctx = lxpath.context:new({
     namespaces = {
         myns = "http://a.name-space"
     },
@@ -16,10 +64,9 @@ local ctxvalue = {
         a = 5,
         ["one-two"] = 12,
     },
-    xmldoc = { xmltab },
-    sequence = { xmltab }
-}
-local ctx = lxpath.context:new(ctxvalue)
+    xmldoc = { doc },
+    sequence = { doc }
+})
 
 -- toks is a token list
 local toks, msg = lxpath.string_to_tokenlist(str)
@@ -284,7 +331,7 @@ lxpath.registerFunction({ "substring", "http://www.w3.org/2005/xpath-functions",
 
 ## XML Representation
 
-Since the XPath library does not parse XML, it expects a Lua table structure. Each element (a table) has zero or more children, either a string or another element. The element table has this representation:
+The `xmlparser.parse()` function produces this structure automatically. If you want to construct the table manually or supply it from another source, here is the format. Each element (a table) has zero or more children, either a string or another element. The element table has this representation:
 
 ```lua
 {
