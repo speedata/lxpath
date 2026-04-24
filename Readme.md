@@ -1,14 +1,11 @@
-## Pure Lua XPath 2.0 parser
+# lxpath — Pure Lua XPath Parser and Evaluator
 
-This is part of the [speedata Publisher](https://github.com/speedata/publisher/).
+A pure Lua XPath parser and evaluator supporting XPath 2.0 with selected XPath 3.1 features (arrays, maps, string concatenation). No external dependencies — all utility libraries are vendored. Part of the [speedata Publisher](https://github.com/speedata/publisher/).
 
-See the test file to get get idea of the amount of XPath functionality that is implemented.
-
-### Using the library
-
+## Using the library
 
 ```lua
--- crate a context with variables, namespaces and an XML document
+-- create a context with variables, namespaces and an XML document
 local ctxvalue = {
     namespaces = {
         myns = "http://a.name-space"
@@ -55,7 +52,194 @@ and
 sequence, errormessage = ctx:execute("xpath string")
 ```
 
-The difference is that the `eval()` does not change the context, it only returns the sequence. `execute()` changes self.
+The difference is that `eval()` does not change the context, it only returns the sequence. `execute()` changes self.
+
+## Supported XPath Syntax
+
+### Expressions
+
+| Expression | Example | Description |
+|---|---|---|
+| Path | `child/grandchild` | Navigate the XML tree |
+| Abbreviated path | `//item` | Descendant-or-self shorthand |
+| Filter / Predicate | `item[position() = 1]` | Filter sequences with `[]` |
+| Arithmetic | `1 + 2`, `$a * 3` | `+`, `-`, `*`, `div`, `idiv`, `mod` |
+| Comparison | `$x = 1`, `$x eq 1` | General (`=`, `!=`, `<`, `>`, `<=`, `>=`) and value (`eq`, `ne`, `lt`, `le`, `gt`, `ge`) comparisons |
+| Node comparison | `$a is $b`, `$a << $b` | `is`, `<<`, `>>` |
+| Logical | `$a and $b`, `$a or $b` | `and`, `or` |
+| Range | `1 to 10` | Integer sequence |
+| String concatenation | `'hello' \|\| ' world'` | XPath 3.1 `\|\|` operator |
+| Unary | `-$x`, `+$x` | Unary plus/minus |
+| Union | `a \| b` | Node set union |
+| If/then/else | `if ($x) then 'a' else 'b'` | Conditional |
+| For | `for $i in 1 to 5 return $i * 2` | Iteration |
+| Quantified | `some $x in (1,2,3) satisfies $x > 2` | `some` / `every` |
+| Type | `$x instance of xs:integer` | `instance of`, `cast as`, `castable as`, `treat as` |
+| Variable reference | `$varname` | Access context variables |
+| Context item | `.` | Current item |
+
+### Axes
+
+| Axis | Abbreviated | Direction |
+|---|---|---|
+| `child::` | (default) | forward |
+| `attribute::` | `@` | forward |
+| `self::` | `.` | forward |
+| `descendant::` | | forward |
+| `descendant-or-self::` | `//` | forward |
+| `following::` | | forward |
+| `following-sibling::` | | forward |
+| `parent::` | `..` | reverse |
+| `ancestor::` | | reverse |
+| `ancestor-or-self::` | | reverse |
+| `preceding::` | | reverse |
+| `preceding-sibling::` | | reverse |
+
+### Node Tests
+
+| Test | Description |
+|---|---|
+| `node()` | Any node |
+| `element()` | Element nodes |
+| `text()` | Text nodes |
+| `comment()` | Comment nodes |
+| `processing-instruction()` | PI nodes |
+| `*` | Any element (wildcard) |
+| `prefix:*` | Any element in namespace |
+| `name` | Element by name |
+
+## Built-in Functions
+
+### String Functions
+
+| Function | Description |
+|---|---|
+| `concat(s1, s2, ...)` | Concatenate strings |
+| `contains(s, sub)` | Test if string contains substring |
+| `ends-with(s, sub)` | Test if string ends with substring |
+| `lower-case(s)` | Convert to lowercase |
+| `normalize-space(s)` | Normalize whitespace |
+| `starts-with(s, sub)` | Test if string starts with substring |
+| `string(item?)` | Convert to string |
+| `string-join(seq, sep)` | Join sequence with separator |
+| `string-length(s?)` | Length of string |
+| `substring(s, start, len?)` | Extract substring |
+| `substring-after(s, sub)` | Substring after first occurrence |
+| `substring-before(s, sub)` | Substring before first occurrence |
+| `translate(s, from, to)` | Character-by-character translation |
+| `upper-case(s)` | Convert to uppercase |
+| `matches(s, pattern, flags?)` | Regular expression matching (stub — provide your own implementation) |
+| `codepoints-to-string(seq)` | Codepoints to string |
+| `string-to-codepoints(s)` | String to codepoints |
+
+### Numeric Functions
+
+| Function | Description |
+|---|---|
+| `abs(n)` | Absolute value |
+| `ceiling(n)` | Round up |
+| `floor(n)` | Round down |
+| `format-number(n, fmt)` | Format number as string |
+| `number(item)` | Convert to number |
+| `round(n)` | Round to nearest integer |
+| `round-half-to-even(n, precision?)` | Banker's rounding |
+
+### Boolean Functions
+
+| Function | Description |
+|---|---|
+| `boolean(item)` | Convert to boolean |
+| `false()` | Boolean false |
+| `true()` | Boolean true |
+| `not(b)` | Boolean negation |
+
+### Sequence Functions
+
+| Function | Description |
+|---|---|
+| `count(seq)` | Number of items |
+| `distinct-values(seq)` | Remove duplicates |
+| `empty(seq)` | Test if empty |
+| `max(seq)` | Maximum value |
+| `min(seq)` | Minimum value |
+| `reverse(seq)` | Reverse order |
+
+### Node Functions
+
+| Function | Description |
+|---|---|
+| `doc(uri)` | Load document |
+| `last()` | Size of current context |
+| `local-name(node?)` | Local name of node |
+| `name(node?)` | Qualified name of node |
+| `namespace-uri(node?)` | Namespace URI |
+| `position()` | Position in current context |
+| `root(node?)` | Root node |
+
+### Other Functions
+
+| Function | Description |
+|---|---|
+| `serialize(item)` | Serialize node to XML string |
+| `unparsed-text(uri)` | Read file as text |
+
+### Array Functions (`array:`)
+
+Requires namespace declaration: `array = "http://www.w3.org/2005/xpath-functions/array"`
+
+| Function | Description |
+|---|---|
+| `array:size(a)` | Number of members |
+| `array:get(a, pos)` | Get member at position |
+| `array:put(a, pos, val)` | Replace member at position |
+| `array:append(a, val)` | Append member |
+| `array:subarray(a, start, len?)` | Extract sub-array |
+| `array:remove(a, pos)` | Remove member at position |
+| `array:join(arrays)` | Concatenate arrays |
+| `array:flatten(a)` | Flatten nested arrays |
+
+### Map Functions (`map:`)
+
+Requires namespace declaration: `map = "http://www.w3.org/2005/xpath-functions/map"`
+
+| Function | Description |
+|---|---|
+| `map:size(m)` | Number of entries |
+| `map:keys(m)` | All keys |
+| `map:get(m, key)` | Get value for key |
+| `map:put(m, key, val)` | Add/replace entry |
+| `map:remove(m, key)` | Remove entry |
+| `map:contains(m, key)` | Test if key exists |
+| `map:merge(maps)` | Merge maps |
+| `map:entry(key, val)` | Create single-entry map |
+
+## Arrays and Maps (XPath 3.1)
+
+### Constructors
+
+```xpath
+(: Square array constructor :)
+[1, 2, 3]
+
+(: Curly array constructor — each item becomes a member :)
+array { 1 to 5 }
+
+(: Empty map :)
+map {}
+
+(: Map with entries :)
+map { 'name': 'Alice', 'age': 30 }
+```
+
+### Lookup Operator `?`
+
+```xpath
+$myarray?1          (: first member :)
+$myarray?*          (: all members :)
+$mymap?name         (: value for key 'name' :)
+$mymap?*            (: all values :)
+[10, 20, 30]?2      (: 20 :)
+```
 
 ## Running the tests
 
@@ -63,22 +247,19 @@ The difference is that the `eval()` does not change the context, it only returns
 lua lxpath_test.lua
 ```
 
-## Unicode and UTF8
+Run a single test by name:
 
-All input is expected to be in UTF8.
+```
+lua lxpath_test.lua TestTokenizer.test_get_qname
+```
+
+## Unicode and UTF-8
+
+All input is expected to be in UTF-8.
 
 This library is not unicode aware! This means for example `upper-case('ä')` is not `Ä`, but `ä`, since there is no lookup table for unicode.
 
-You can provide your own implementations for `string.match` and `string.find` (which might be UTF8 ready) by setting `M.stringmatch` and `M.stringfind`.
-
-## Limitations
-
-* Work in progress: union/except/intersect and date functions are currently missing
-* This library is not unicode aware (see above).
-* No schema support.
-* Since Lua does not have “real” regular expressions, the functions that expect regular expressions are not implemented (`matches()`, `replace()`, `tokenize()`). You should provide your own implementations of these functions.
-
-You can override the XPath functions.
+You can provide your own implementations for `string.match` and `string.find` (which might be UTF-8 ready) by setting `M.stringmatch` and `M.stringfind`.
 
 ## Registering new XPath functions
 
@@ -92,20 +273,18 @@ It expects a table with the following fields:
 4. minimum number of arguments
 5. maximum number of arguments (-1 if arbitrary many arguments allowed)
 
-example:
+Example:
 
 ```lua
 function fnSubstring(ctx, arg)
     ...
 end
-registerFunction( { "substring", "http://www.w3.org/2005/xpath-functions", fnSubstring,2, 3 } )
+lxpath.registerFunction({ "substring", "http://www.w3.org/2005/xpath-functions", fnSubstring, 2, 3 })
 ```
 
-## XML representation
+## XML Representation
 
-Since the xpath library is not parsing the XML file, it has to be represented in a tree like data structure.
-
-Each element (a table) has zero or more children, either a string or another element. The element table has this representation:
+Since the XPath library does not parse XML, it expects a Lua table structure. Each element (a table) has zero or more children, either a string or another element. The element table has this representation:
 
 ```lua
 {
@@ -115,7 +294,6 @@ Each element (a table) has zero or more children, either a string or another ele
     [".__local_name"] = "elementname",
     [".__namespace"] = "",
     [".__ns"] = {
-        -- some predefined name spaces
         ["myprefix"] = "http://a.name.space",
     },
     [".__attributes"] = {
@@ -140,9 +318,7 @@ For example the following XML
 </data>
 ```
 
-
 must be encoded in Lua as:
-
 
 ```lua
 tbl = {
@@ -174,3 +350,10 @@ tbl = {
 }
 ```
 
+## Limitations
+
+* Union/except/intersect operators are only partially implemented
+* Date functions are not implemented
+* No schema support
+* Not unicode aware (see above)
+* Since Lua does not have full regular expressions, `matches()` is a stub — provide your own implementation via `registerFunction()`. `replace()` and `tokenize()` are not implemented.
