@@ -12,6 +12,15 @@ function TestTokenizer:test_get_qname()
         { "aaa",         "aaa" },
         { "aaa:foo",     "aaa:foo" },
         { "aaa:foo:bar", "aaa:foo" },
+        -- '*' is only valid as a wildcard at the beginning of a name or
+        -- directly after the namespace prefix separator ':'.
+        { "*",           "*" },
+        { "*:local",     "*:local" },
+        { "ns:*",        "ns:*" },
+        -- '*' in the middle of a name terminates the qname (operator follows).
+        { "a*b",         "a" },
+        { "a*",          "a" },
+        { "ns:foo*bar",  "ns:foo" },
     }
     for _, td in ipairs(testdata) do
         local runes = lxpath.private.split_chars(td[1])
@@ -39,6 +48,8 @@ function TestTokenizer:test1()
         { "'abc'",          { { "abc", "tokString" } } },
         { "123.4",          { { 123.4, "tokNumber" } } },
         { " 2 +2",          { { 2, "tokNumber" }, { '+', "tokOperator" }, { 2, "tokNumber" } } },
+        { "$a*$b",          { { "a", "tokVarname" }, { '*', "tokOperator" }, { "b", "tokVarname" } } },
+        { "$a* $b",         { { "a", "tokVarname" }, { '*', "tokOperator" }, { "b", "tokVarname" } } },
         { " abc // def ",   { { "abc", "tokQName" }, { '//', "tokOperator" }, { "def", "tokQName" } } },
         { " false() ",      { { "false", "tokQName" }, { '(', "tokOpenParen" }, { ')', "tokCloseParen" } } },
         { "a('-')",         { { "a", "tokQName" }, { '(', "tokOpenParen" }, { "-", "tokString" }, { ')', "tokCloseParen" } } },
@@ -118,6 +129,12 @@ function TestTokenizer:test_parse_simple()
         { "$foo",                                                                { "bar" } },
         { "$onedotfive + 2",                                                     { 3.5 } },
         { "$one-two div $a",                                                     { 2.4 } },
+        -- '*' adjacent to a variable name must tokenize as the multiplication
+        -- operator, not be absorbed into the QName.
+        { "$a*$a",                                                               { 25.0 } },
+        { "$a *$a",                                                              { 25.0 } },
+        { "$a* $a",                                                              { 25.0 } },
+        { "$a*$onedotfive",                                                      { 7.5 } },
         { "7 mod 3",                                                             { 1.0 } },
         { "9 * 4 div 6",                                                         { 6.0 } },
         { "( 6 + 4 ) * 2",                                                       { 20.0 } },
