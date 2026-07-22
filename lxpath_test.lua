@@ -320,6 +320,16 @@ function TestTokenizer:test_parse_simple()
         { [[ some $i in /root/sub satisfies $i/@foo="bar"]],                     { true } },
         { [[ some $i in /root/sub satisfies $i/@foo="zzzz"]],                    { false } },
         { [[ some $x in (1, 2, 3), $y in (2, 3) satisfies $x + $y = 4]],         { true } },
+        { " count(/root/sub | /root/other) ",                                    { 5 } },
+        { " count(/root/sub union /root/other) ",                                { 5 } },
+        { " count(/root/sub | /root/sub) ",                                      { 3 } },
+        { " count(/root/sub | /root/other | /root/a) ",                          { 7 } },
+        -- union result must be in document order (sub precedes other)
+        { " string( (/root/other | /root/sub)[1]/@foo ) ",                       { "baz" } },
+        { " count( (/root/sub | /root/other) intersect /root/sub ) ",            { 3 } },
+        { " count( /root/sub intersect /root/other ) ",                          { 0 } },
+        { " count( (/root/sub | /root/other) except /root/sub ) ",               { 2 } },
+        { " count( /root/sub except /root/other ) ",                             { 3 } },
     }
 
     for _, td in ipairs(testdata) do
