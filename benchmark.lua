@@ -144,7 +144,7 @@ local function run_benchmarks()
 
     for _, xp in ipairs(xpaths) do
         bench("tokenize+parse: " .. string.sub(xp, 1, 35), 5000, function()
-            local toks = lxpath.string_to_tokenlist(xp)
+            local toks = assert(lxpath.string_to_tokenlist(xp))
             lxpath.parse_xpath(toks)
         end)
     end

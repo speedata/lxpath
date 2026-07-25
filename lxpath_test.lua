@@ -1,7 +1,6 @@
 local luaunit = require("luaunit")
 local lxpath = require("lxpath")
 local xmltab = dofile("xmltable.lua")
-lxpath_dodebug = false
 
 TestTokenizer = {}
 
@@ -615,6 +614,48 @@ function TestTokenizer:test_map_functions()
     for _, td in ipairs(testdata) do
         local ctx = lxpath.context:new({
             namespaces = { fn = lxpath.fnNS, map = lxpath.mapNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
+-- Errors must be reported as the second return value (never as the result),
+-- non-numeric arguments must not crash the evaluator
+function TestTokenizer:test_error_reporting()
+    local errdata = {
+        "floor((1,2))",
+        "ceiling((1,2))",
+        "for $x in floor((1,2)) return $x",
+        "(1",
+        "array:put([1, 2, 3], 'x', 5)",
+        "array:remove([1, 2], 'x')",
+        "array:subarray([1, 2, 3], 'x')",
+        "codepoints-to-string((65.5))",
+    }
+    for _, xp in ipairs(errdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS, array = lxpath.arrayNS },
+            vars = {},
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(xp)
+        luaunit.assertIsNil(seq, string.format("expression %s should not return a sequence", xp))
+        luaunit.assertNotIsNil(msg, string.format("expression %s should return an error message", xp))
+    end
+    local okdata = {
+        { "substring('hello', 'x')",          { "" } },
+        { "substring('hello', 1, 'x')",       { "" } },
+        { "codepoints-to-string((104, 105))", { "hi" } },
+    }
+    for _, td in ipairs(okdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS },
             vars = {},
             xmldoc = { xmltab },
             sequence = { xmltab },
