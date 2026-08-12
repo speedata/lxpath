@@ -487,6 +487,28 @@ function TestTokenizer:test_string_concat()
     end
 end
 
+-- Regression test for issue #3: // after a step yielding a document node must
+-- keep the document node, so its children remain reachable ($doc//root)
+function TestTokenizer:test_double_slash_after_document_node()
+    local testdata = {
+        { "count($doc/root)",  { 1 } },
+        { "count($doc//root)", { 1 } },
+        { "count(//root)",     { 1 } },
+        { "count($doc//sub)",  { 7 } },
+    }
+    for _, td in ipairs(testdata) do
+        local ctx = lxpath.context:new({
+            namespaces = { fn = lxpath.fnNS },
+            vars = { doc = { xmltab } },
+            xmldoc = { xmltab },
+            sequence = { xmltab },
+        })
+        local seq, msg = ctx:eval(td[1])
+        luaunit.assertIsNil(msg, string.format("expression %s returned error: %s", td[1], tostring(msg)))
+        luaunit.assertEquals(seq, td[2], td[1])
+    end
+end
+
 -- Test tokenizer for new tokens
 function TestTokenizer:test_new_tokens()
     local testdata = {
