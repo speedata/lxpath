@@ -658,6 +658,7 @@ function TestTokenizer:test_error_reporting()
         "array:remove([1, 2], 'x')",
         "array:subarray([1, 2, 3], 'x')",
         "codepoints-to-string((65.5))",
+        "xyzzy:foo()",
     }
     for _, xp in ipairs(errdata) do
         local ctx = lxpath.context:new({
