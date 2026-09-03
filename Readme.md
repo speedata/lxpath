@@ -176,6 +176,9 @@ The difference is that `eval()` does not change the context, it only returns the
 | `translate(s, from, to)` | Character-by-character translation |
 | `upper-case(s)` | Convert to uppercase |
 | `matches(s, pattern, flags?)` | Regular expression matching (stub — provide your own implementation) |
+| `replace(s, pattern, replacement, flags?)` | Regular expression replacement (Lua patterns; `$1`–`$9` group references) |
+| `tokenize(s, pattern?, flags?)` | Split string at pattern (Lua patterns); without pattern splits at whitespace |
+| `compare(a, b)` | Compare strings, returns -1, 0 or 1 |
 | `codepoints-to-string(seq)` | Codepoints to string |
 | `string-to-codepoints(s)` | String to codepoints |
 
@@ -204,12 +207,23 @@ The difference is that `eval()` does not change the context, it only returns the
 
 | Function | Description |
 |---|---|
+| `avg(seq)` | Average value |
 | `count(seq)` | Number of items |
+| `deep-equal(a, b)` | Recursive comparison of sequences and nodes |
 | `distinct-values(seq)` | Remove duplicates |
 | `empty(seq)` | Test if empty |
+| `exactly-one(seq)` | Error unless sequence has exactly one item |
+| `exists(seq)` | Test if non-empty |
+| `index-of(seq, item)` | Positions of matching items |
+| `insert-before(seq, pos, items)` | Insert items at position |
 | `max(seq)` | Maximum value |
 | `min(seq)` | Minimum value |
+| `one-or-more(seq)` | Error if sequence is empty |
+| `remove(seq, pos)` | Remove item at position |
 | `reverse(seq)` | Reverse order |
+| `subsequence(seq, start, len?)` | Extract part of a sequence |
+| `sum(seq, default?)` | Sum of values |
+| `zero-or-one(seq)` | Error if sequence has more than one item |
 
 ### Node Functions
 
